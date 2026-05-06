@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>足迹地图</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <button class="brand" id="brandButton" type="button" title="足迹地图">
+          <span class="brand-mark">足</span>
+          <span>
+            <strong>足迹地图</strong>
+            <small id="viewHint">中国省级地图</small>
+          </span>
+        </button>
+
+        <div class="toolbar">
+          <button class="tool-button" id="backButton" type="button" hidden>返回全国</button>
+          <button class="tool-button" id="ledgerButton" type="button" hidden>足迹簿</button>
+          <span class="status-pill" id="authStatus">未登录</span>
+          <button class="tool-button primary" id="loginButton" type="button">管理员登录</button>
+          <button class="tool-button" id="logoutButton" type="button" hidden>退出</button>
+        </div>
+      </header>
+
+      <main class="map-stage">
+        <div class="map-header">
+          <div>
+            <p class="eyebrow">中国 2D 行政区足迹</p>
+            <h1 id="mapTitle">全国足迹</h1>
+          </div>
+          <div class="legend" id="legend"></div>
+        </div>
+        <div class="map-card">
+          <div id="map"></div>
+          <div class="map-loading" id="loadingMask">正在加载地图...</div>
+        </div>
+      </main>
+    </div>
+
+    <aside class="drawer" id="ledgerDrawer" aria-hidden="true">
+      <div class="drawer-header">
+        <div>
+          <p class="eyebrow">全部记录</p>
+          <h2>足迹簿</h2>
+        </div>
+        <button class="icon-button" id="closeLedgerButton" type="button" aria-label="关闭">×</button>
+      </div>
+      <div class="drawer-body" id="ledgerList"></div>
+    </aside>
+    <div class="drawer-scrim" id="drawerScrim" hidden></div>
+
+    <dialog class="modal" id="loginDialog">
+      <form method="dialog" class="modal-panel" id="loginForm">
+        <div class="modal-header">
+          <div>
+            <p class="eyebrow">管理员入口</p>
+            <h2>登录后管理足迹</h2>
+          </div>
+          <button class="icon-button" value="cancel" type="button" data-close-login aria-label="关闭">×</button>
+        </div>
+        <label>
+          邮箱
+          <input id="emailInput" type="email" autocomplete="email" required />
+        </label>
+        <label>
+          密码
+          <input id="passwordInput" type="password" autocomplete="current-password" required />
+        </label>
+        <p class="form-message" id="loginMessage"></p>
+        <div class="modal-actions">
+          <button class="tool-button" value="cancel" type="button" data-close-login>取消</button>
+          <button class="tool-button primary" type="submit">登录</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="modal" id="footprintDialog">
+      <form method="dialog" class="modal-panel" id="footprintForm">
+        <div class="modal-header">
+          <div>
+            <p class="eyebrow">新增足迹</p>
+            <h2 id="footprintDialogTitle">确认这次到访</h2>
+          </div>
+          <button class="icon-button" value="cancel" type="button" data-close-footprint aria-label="关闭">×</button>
+        </div>
+
+        <div class="locked-location" id="lockedLocation"></div>
+
+        <label>
+          行程年月
+          <input id="visitMonthInput" type="month" required />
+        </label>
+
+        <label>
+          同行者标签
+          <select id="companionInput" required></select>
+        </label>
+
+        <label>
+          备注
+          <textarea id="remarkInput" rows="3" placeholder="写一句这次旅行的记忆"></textarea>
+        </label>
+
+        <p class="form-message" id="footprintMessage"></p>
+        <div class="modal-actions">
+          <button class="tool-button" value="cancel" type="button" data-close-footprint>取消</button>
+          <button class="tool-button primary" type="submit">保存足迹</button>
+        </div>
+      </form>
+    </dialog>
+
+    <div class="toast" id="toast" role="status"></div>
+
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="./app.js"></script>
+  </body>
+</html>
