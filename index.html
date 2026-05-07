@@ -32,8 +32,28 @@
             <p class="eyebrow">中国 2D 行政区足迹</p>
             <h1 id="mapTitle">全国足迹</h1>
           </div>
-          <div class="legend" id="legend"></div>
+          <div class="map-tools">
+            <div class="segmented" aria-label="地图模式">
+              <button type="button" data-map-mode="highlight" aria-pressed="true">足迹高亮</button>
+              <button type="button" data-map-mode="plain" aria-pressed="false">普通地图</button>
+            </div>
+            <div class="segmented" id="fillLevelControls" aria-label="填色层级">
+              <button type="button" data-fill-level="province" aria-pressed="true">省级填色</button>
+              <button type="button" data-fill-level="city" aria-pressed="false">市级填色</button>
+            </div>
+            <div class="legend" id="legend"></div>
+          </div>
         </div>
+
+        <section class="search-panel" aria-label="地点搜索">
+          <div class="search-row">
+            <input id="locationSearchInput" type="search" placeholder="搜索省份或城市" autocomplete="off" />
+            <button class="tool-button" id="clearSearchButton" type="button" hidden>清除</button>
+          </div>
+          <div class="search-results" id="searchResults" hidden></div>
+          <div class="location-panel" id="locationPanel" hidden></div>
+        </section>
+
         <div class="map-card">
           <div id="map"></div>
           <div class="map-loading" id="loadingMask">正在加载地图...</div>

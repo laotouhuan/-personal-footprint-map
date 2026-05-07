@@ -3,6 +3,8 @@ const SUPABASE_ANON_KEY = "sb_publishable_MnoKuiESGpic_JyL_a8WgQ_6UvD43YG";
 const FOOTPRINT_TABLE = "footprint_logs";
 const CHINA_ADCODE = "100000";
 const GEOJSON_BASE = "https://geo.datav.aliyun.com/areas_v3/bound";
+const LOCAL_CHINA_GEOJSON_BASE = "./maps/china";
+const CHINA_CITY_MAP_NAME = "china-cities";
 const REQUEST_TIMEOUT_MS = 8000;
 
 const companionTags = [
@@ -50,11 +52,28 @@ const provinceAdcodes = {
   澳门特别行政区: "820000",
 };
 
+const provinceNameByAdcode = Object.fromEntries(
+  Object.entries(provinceAdcodes).map(([name, adcode]) => [adcode, name]),
+);
+
 const state = {
   chart: null,
   supabase: null,
   session: null,
   logs: [],
+  mapMode: "highlight",
+  fillLevel: "province",
+  activeCompanionFilters: new Set(companionTags.map((tag) => tag.label)),
+  geoJsonCache: new Map(),
+  mapRegions: new Map(),
+  cityProvinceByName: new Map(),
+  locationIndex: [],
+  locationLookup: new Map(),
+  locationIndexReady: false,
+  chinaCityGeoJson: null,
+  cityMapPromise: null,
+  renderSerial: 0,
+  selectedLocation: null,
   currentView: {
     level: "country",
     mapName: "china",
@@ -72,6 +91,13 @@ const els = {
   mapTitle: document.querySelector("#mapTitle"),
   viewHint: document.querySelector("#viewHint"),
   legend: document.querySelector("#legend"),
+  mapModeButtons: document.querySelectorAll("[data-map-mode]"),
+  fillLevelControls: document.querySelector("#fillLevelControls"),
+  fillLevelButtons: document.querySelectorAll("[data-fill-level]"),
+  locationSearchInput: document.querySelector("#locationSearchInput"),
+  clearSearchButton: document.querySelector("#clearSearchButton"),
+  searchResults: document.querySelector("#searchResults"),
+  locationPanel: document.querySelector("#locationPanel"),
   backButton: document.querySelector("#backButton"),
   ledgerButton: document.querySelector("#ledgerButton"),
   authStatus: document.querySelector("#authStatus"),
@@ -116,6 +142,9 @@ async function init() {
 
   setupStaticUi();
   await loadCountryMap();
+  buildLocationIndex().catch((error) => {
+    showToast(`地点索引准备失败：${error.message}`);
+  });
   restoreSession().catch((error) => {
     showToast(`登录状态恢复失败：${error.message}`);
   });
@@ -131,16 +160,7 @@ function setupStaticUi() {
     els.companionInput.append(option);
   });
 
-  els.legend.innerHTML = companionTags
-    .map(
-      (tag) => `
-        <span class="legend-item">
-          <span class="legend-dot" style="background:${tag.color}"></span>
-          ${tag.label}
-        </span>
-      `,
-    )
-    .join("");
+  renderLegend();
 
   els.loginButton.addEventListener("click", openLoginDialog);
   els.logoutButton.addEventListener("click", logout);
@@ -150,6 +170,17 @@ function setupStaticUi() {
   els.drawerScrim.addEventListener("click", closeLedger);
   els.loginForm.addEventListener("submit", login);
   els.footprintForm.addEventListener("submit", saveFootprint);
+  els.legend.addEventListener("change", handleLegendFilterChange);
+  els.mapModeButtons.forEach((button) => {
+    button.addEventListener("click", () => setMapMode(button.dataset.mapMode));
+  });
+  els.fillLevelButtons.forEach((button) => {
+    button.addEventListener("click", () => setFillLevel(button.dataset.fillLevel));
+  });
+  els.locationSearchInput.addEventListener("input", renderSearchResults);
+  els.clearSearchButton.addEventListener("click", clearLocationSearch);
+  els.searchResults.addEventListener("click", handleSearchResultClick);
+  els.locationPanel.addEventListener("click", handleLocationPanelClick);
   document.querySelectorAll("[data-close-login]").forEach((button) => {
     button.addEventListener("click", () => els.loginDialog.close());
   });
@@ -165,6 +196,58 @@ function setupStaticUi() {
   if (location.pathname.endsWith("/admin") || location.hash === "#admin") {
     setTimeout(openLoginDialog, 200);
   }
+}
+
+function renderLegend() {
+  els.legend.innerHTML = companionTags
+    .map(
+      (tag) => `
+        <label class="legend-item">
+          <input type="checkbox" value="${escapeHtml(tag.label)}" ${
+            state.activeCompanionFilters.has(tag.label) ? "checked" : ""
+          } />
+          <span class="legend-dot" style="background:${tag.color}"></span>
+          ${escapeHtml(tag.label)}
+        </label>
+      `,
+    )
+    .join("");
+}
+
+function handleLegendFilterChange(event) {
+  const checkbox = event.target.closest("input[type='checkbox']");
+  if (!checkbox) return;
+
+  if (checkbox.checked) {
+    state.activeCompanionFilters.add(checkbox.value);
+  } else {
+    state.activeCompanionFilters.delete(checkbox.value);
+  }
+  renderCurrentMap();
+}
+
+function setMapMode(mode) {
+  if (!["highlight", "plain"].includes(mode)) return;
+  state.mapMode = mode;
+  syncMapControls();
+  renderCurrentMap();
+}
+
+function setFillLevel(fillLevel) {
+  if (!["province", "city"].includes(fillLevel)) return;
+  state.fillLevel = fillLevel;
+  syncMapControls();
+  renderCurrentMap();
+}
+
+function syncMapControls() {
+  els.mapModeButtons.forEach((button) => {
+    button.setAttribute("aria-pressed", String(button.dataset.mapMode === state.mapMode));
+  });
+  els.fillLevelButtons.forEach((button) => {
+    button.setAttribute("aria-pressed", String(button.dataset.fillLevel === state.fillLevel));
+  });
+  els.fillLevelControls.hidden = state.currentView.level !== "country";
 }
 
 async function restoreSession() {
@@ -195,6 +278,7 @@ function updateAuthUi() {
   els.loginButton.hidden = isAuthed;
   els.logoutButton.hidden = !isAuthed;
   els.ledgerButton.hidden = !isAuthed;
+  renderLocationPanel();
 }
 
 function handleHiddenAdminTap() {
@@ -233,7 +317,11 @@ async function login(event) {
 async function logout() {
   await state.supabase.auth.signOut();
   state.logs = [];
+  state.selectedLocation = null;
   closeLedger();
+  renderLedger();
+  renderLocationPanel();
+  renderCurrentMap();
   showToast("已退出登录");
 }
 
@@ -257,10 +345,11 @@ async function loadLogs() {
 
   state.logs = data || [];
   renderLedger();
+  renderLocationPanel();
 }
 
 async function loadCountryMap() {
-  state.currentView = {
+  const nextView = {
     level: "country",
     mapName: "china",
     title: "全国足迹",
@@ -269,6 +358,7 @@ async function loadCountryMap() {
   };
   const loaded = await loadAndRegisterMap("china", CHINA_ADCODE);
   if (!loaded) return;
+  state.currentView = nextView;
   renderCurrentMap();
 }
 
@@ -279,15 +369,16 @@ async function loadProvinceMap(provinceName) {
     return;
   }
 
-  state.currentView = {
+  const nextView = {
     level: "province",
     mapName: `province-${adcode}`,
     title: provinceName,
     province: provinceName,
     adcode,
   };
-  const loaded = await loadAndRegisterMap(state.currentView.mapName, adcode);
+  const loaded = await loadAndRegisterMap(nextView.mapName, adcode);
   if (!loaded) return;
+  state.currentView = nextView;
   renderCurrentMap();
 }
 
@@ -299,57 +390,89 @@ async function loadAndRegisterMap(mapName, adcode) {
 
   setLoading(true, "正在加载地图...");
   try {
-    const response = await fetchWithTimeout(`${GEOJSON_BASE}/${adcode}_full.json`, REQUEST_TIMEOUT_MS);
-    if (!response.ok) throw new Error("地图数据请求失败");
-    const geoJson = await response.json();
+    const geoJson = await loadGeoJson(adcode);
     echarts.registerMap(mapName, geoJson);
+    state.mapRegions.set(mapName, getFeatureNames(geoJson));
     setLoading(false);
     return true;
   } catch (error) {
-    const message = `地图数据加载失败。请检查网络能否访问 geo.datav.aliyun.com，或稍后刷新重试。错误：${error.message}`;
+    const message = `地图数据加载失败。本地文件与远程备用源均不可用。错误：${error.message}`;
     setLoading(true, message);
     showToast("地图数据加载失败");
     return false;
   }
 }
 
-function renderCurrentMap() {
+async function loadGeoJson(adcode) {
+  if (state.geoJsonCache.has(adcode)) return state.geoJsonCache.get(adcode);
+
+  const urls = [
+    `${LOCAL_CHINA_GEOJSON_BASE}/${adcode}_full.json`,
+    `${GEOJSON_BASE}/${adcode}_full.json`,
+  ];
+  const errors = [];
+
+  for (const url of urls) {
+    try {
+      const response = await fetchWithTimeout(url, REQUEST_TIMEOUT_MS);
+      if (!response.ok) throw new Error(`${response.status} ${response.statusText}`.trim());
+      const geoJson = await response.json();
+      state.geoJsonCache.set(adcode, geoJson);
+      return geoJson;
+    } catch (error) {
+      errors.push(`${url}：${error.message}`);
+    }
+  }
+
+  throw new Error(errors.join("；"));
+}
+
+function getFeatureNames(geoJson) {
+  return new Set((geoJson.features || []).map((feature) => feature.properties?.name).filter(Boolean));
+}
+
+async function renderCurrentMap() {
+  const serial = ++state.renderSerial;
   const { currentView } = state;
   els.mapTitle.textContent = currentView.title;
-  els.viewHint.textContent =
-    currentView.level === "country" ? "点击省份进入市级地图" : "点击城市新增足迹";
+  els.viewHint.textContent = getViewHint();
   els.backButton.hidden = currentView.level === "country";
+  syncMapControls();
+
+  const renderTarget = await prepareRenderTarget();
+  if (!renderTarget || serial !== state.renderSerial) return;
 
   const seriesData = buildMapSeriesData();
 
   state.chart.setOption(
     {
-      backgroundColor: "#fffaf0",
+      backgroundColor: "#ffffff",
       tooltip: {
         trigger: "item",
         borderWidth: 0,
-        backgroundColor: "rgba(36, 33, 29, 0.88)",
+        backgroundColor: "rgba(31, 41, 51, 0.9)",
         textStyle: { color: "#fff" },
         formatter: (params) => formatTooltip(params.name),
       },
       series: [
         {
           type: "map",
-          map: currentView.mapName,
+          map: renderTarget.mapName,
           roam: true,
           selectedMode: false,
+          animationDurationUpdate: 260,
           label: {
             show: true,
-            color: "#4f4a43",
+            color: "#43505c",
             fontSize: 11,
           },
           emphasis: {
-            label: { color: "#1d1a17", fontWeight: 700 },
-            itemStyle: { areaColor: "#f3c96b" },
+            label: { color: "#1f2933", fontWeight: 700 },
+            itemStyle: { areaColor: "#f2c66d" },
           },
           itemStyle: {
-            areaColor: "#e6dece",
-            borderColor: "#b9ad9b",
+            areaColor: "#dfe8ea",
+            borderColor: "#aab9c0",
             borderWidth: 1,
           },
           data: seriesData,
@@ -361,15 +484,85 @@ function renderCurrentMap() {
   setLoading(false);
 }
 
+function getViewHint() {
+  if (state.currentView.level === "province") return "点击城市新增足迹";
+  if (state.fillLevel === "city") return "市级填色：点击城市新增足迹";
+  return "省级填色：点击省份进入市级地图";
+}
+
+async function prepareRenderTarget() {
+  if (state.currentView.level === "country" && state.fillLevel === "city") {
+    const loaded = await loadChinaCityMap();
+    if (loaded) return { mapName: CHINA_CITY_MAP_NAME };
+    state.fillLevel = "province";
+    syncMapControls();
+    return { mapName: state.currentView.mapName };
+  }
+  return { mapName: state.currentView.mapName };
+}
+
+async function loadChinaCityMap() {
+  if (echarts.getMap(CHINA_CITY_MAP_NAME)) return true;
+  if (state.cityMapPromise) return state.cityMapPromise;
+
+  state.cityMapPromise = (async () => {
+    setLoading(true, "正在加载全国市级地图...");
+    try {
+      const cityGeoJson = state.chinaCityGeoJson || (await buildChinaCityGeoJson());
+      if (!cityGeoJson.features.length) throw new Error("未找到市级地图数据");
+      echarts.registerMap(CHINA_CITY_MAP_NAME, cityGeoJson);
+      state.mapRegions.set(CHINA_CITY_MAP_NAME, getFeatureNames(cityGeoJson));
+      setLoading(false);
+      return true;
+    } catch (error) {
+      showToast(`市级地图加载失败：${error.message}`);
+      setLoading(false);
+      return false;
+    } finally {
+      state.cityMapPromise = null;
+    }
+  })();
+
+  return state.cityMapPromise;
+}
+
+async function buildChinaCityGeoJson() {
+  const features = [];
+  const tasks = Object.entries(provinceAdcodes).map(async ([provinceName, adcode]) => {
+    if (adcode === "710000") return;
+    try {
+      const geoJson = await loadGeoJson(adcode);
+      (geoJson.features || []).forEach((feature) => {
+        const cityName = feature.properties?.name;
+        if (!cityName) return;
+        feature.properties = {
+          ...feature.properties,
+          parentName: provinceName,
+        };
+        state.cityProvinceByName.set(cityName, provinceName);
+        features.push(feature);
+      });
+    } catch (_error) {
+      // 个别省级市级数据缺失时不阻断全国地图。
+    }
+  });
+
+  await Promise.all(tasks);
+  state.chinaCityGeoJson = { type: "FeatureCollection", features };
+  return state.chinaCityGeoJson;
+}
+
 function buildMapSeriesData() {
   const regionMap = new Map();
-  const logs = state.session ? state.logs : [];
+  const logs = state.mapMode === "highlight" ? getVisibleLogs() : [];
+  const useEarliest = state.currentView.level === "country" && state.fillLevel === "province";
 
   logs.forEach((log) => {
     const key = getRegionKeyFromLog(log);
     if (!key) return;
     const current = regionMap.get(key);
-    if (!current || compareLogDate(log, current) > 0) {
+    const shouldReplace = useEarliest ? compareLogDate(log, current || log) < 0 : compareLogDate(log, current || log) > 0;
+    if (!current || shouldReplace) {
       regionMap.set(key, log);
     }
   });
@@ -386,9 +579,232 @@ function buildMapSeriesData() {
 }
 
 function getRegionKeyFromLog(log) {
-  if (state.currentView.level === "country") return log.province;
+  if (state.currentView.level === "country") {
+    if (state.fillLevel === "city") return log.city || "";
+    return log.province;
+  }
   if (log.province !== state.currentView.province) return "";
-  return log.city;
+  return log.city || "";
+}
+
+function getVisibleLogs() {
+  if (!state.session) return [];
+  return state.logs.filter((log) => state.activeCompanionFilters.has(log.companion_type));
+}
+
+async function buildLocationIndex() {
+  const locations = [];
+  const lookup = new Map();
+
+  Object.entries(provinceAdcodes).forEach(([provinceName, adcode]) => {
+    const location = {
+      key: `province:${provinceName}`,
+      type: "province",
+      province: provinceName,
+      city: "",
+      adcode,
+      label: provinceName,
+      meta: "省级行政区",
+      searchText: `${provinceName} ${stripAdministrativeSuffix(provinceName)}`,
+    };
+    locations.push(location);
+    lookup.set(location.key, location);
+  });
+
+  const cityGeoJson = await buildChinaCityGeoJson();
+  cityGeoJson.features.forEach((feature) => {
+    const cityName = feature.properties?.name;
+    const parentAdcode = String(feature.properties?.parent?.adcode || "");
+    const provinceName =
+      feature.properties?.parentName || provinceNameByAdcode[parentAdcode] || state.cityProvinceByName.get(cityName);
+    if (!cityName || !provinceName) return;
+
+    const location = {
+      key: `city:${provinceName}:${cityName}`,
+      type: "city",
+      province: provinceName,
+      city: cityName,
+      adcode: String(feature.properties?.adcode || ""),
+      label: cityName,
+      meta: provinceName,
+      searchText: `${cityName} ${stripAdministrativeSuffix(cityName)} ${provinceName}`,
+    };
+    locations.push(location);
+    lookup.set(location.key, location);
+  });
+
+  state.locationIndex = locations;
+  state.locationLookup = lookup;
+  state.locationIndexReady = true;
+  renderSearchResults();
+}
+
+function stripAdministrativeSuffix(name) {
+  return String(name || "")
+    .replace(/特别行政区$/, "")
+    .replace(/维吾尔自治区$/, "")
+    .replace(/壮族自治区$/, "")
+    .replace(/回族自治区$/, "")
+    .replace(/自治区$/, "")
+    .replace(/自治州$/, "")
+    .replace(/地区$/, "")
+    .replace(/盟$/, "")
+    .replace(/省$/, "")
+    .replace(/市$/, "");
+}
+
+function renderSearchResults() {
+  const keyword = els.locationSearchInput.value.trim();
+  els.clearSearchButton.hidden = !keyword && !state.selectedLocation;
+
+  if (!keyword) {
+    els.searchResults.hidden = true;
+    els.searchResults.innerHTML = "";
+    return;
+  }
+
+  if (!state.locationIndexReady) {
+    els.searchResults.hidden = false;
+    els.searchResults.innerHTML = `<p class="empty-state">正在准备地点索引...</p>`;
+    return;
+  }
+
+  const normalizedKeyword = keyword.toLocaleLowerCase();
+  const matches = state.locationIndex
+    .filter((location) => location.searchText.toLocaleLowerCase().includes(normalizedKeyword))
+    .slice(0, 10);
+
+  els.searchResults.hidden = false;
+  if (!matches.length) {
+    els.searchResults.innerHTML = `<p class="empty-state">没有找到匹配地点。</p>`;
+    return;
+  }
+
+  els.searchResults.innerHTML = matches
+    .map(
+      (location) => `
+        <button class="search-result" type="button" data-location-key="${escapeHtml(location.key)}">
+          <span>${escapeHtml(location.label)}</span>
+          <small>${escapeHtml(location.meta)}</small>
+        </button>
+      `,
+    )
+    .join("");
+}
+
+async function handleSearchResultClick(event) {
+  const button = event.target.closest("[data-location-key]");
+  if (!button) return;
+
+  const location = state.locationLookup.get(button.dataset.locationKey);
+  if (!location) return;
+
+  state.selectedLocation = location;
+  els.locationSearchInput.value = location.type === "city" ? `${location.province} ${location.city}` : location.province;
+  els.searchResults.hidden = true;
+  els.clearSearchButton.hidden = false;
+  renderLocationPanel();
+
+  if (location.type === "province") {
+    await loadProvinceMap(location.province);
+  } else {
+    await loadProvinceMap(location.province);
+  }
+}
+
+function clearLocationSearch() {
+  state.selectedLocation = null;
+  els.locationSearchInput.value = "";
+  els.clearSearchButton.hidden = true;
+  els.searchResults.hidden = true;
+  els.searchResults.innerHTML = "";
+  renderLocationPanel();
+}
+
+function renderLocationPanel() {
+  const location = state.selectedLocation;
+  if (!location) {
+    els.locationPanel.hidden = true;
+    els.locationPanel.innerHTML = "";
+    return;
+  }
+
+  els.locationPanel.hidden = false;
+  const locationLogs = getLogsForLocation(location);
+  const headerMeta = location.type === "city" ? location.province : "省级行政区";
+  const canCreate = Boolean(state.session);
+
+  els.locationPanel.innerHTML = `
+    <div class="location-header">
+      <div>
+        <p class="eyebrow">${escapeHtml(headerMeta)}</p>
+        <h2>${escapeHtml(location.label)}</h2>
+      </div>
+      <div class="location-actions">
+        <button class="tool-button primary" type="button" data-location-action="create" ${
+          canCreate ? "" : "disabled"
+        }>新建足迹</button>
+      </div>
+    </div>
+    <div class="location-history">
+      ${renderLocationHistory(locationLogs)}
+    </div>
+  `;
+}
+
+function renderLocationHistory(logs) {
+  if (!state.session) return `<p class="empty-state">登录后可以查看和管理这个地点的足迹。</p>`;
+  if (!logs.length) return `<p class="empty-state">这个地点还没有足迹记录。</p>`;
+
+  return logs
+    .map(
+      (log) => `
+        <article class="history-row">
+          <time>${formatMonth(log.visit_date)}</time>
+          <div>
+            <strong>${escapeHtml(log.companion_type)}</strong>
+            <small>${escapeHtml(getLogLocationLabel(log))}</small>
+            ${log.remark ? `<p>${escapeHtml(log.remark)}</p>` : ""}
+          </div>
+          <button class="delete-button" type="button" data-location-action="delete" data-delete-id="${escapeHtml(
+            log.id,
+          )}">删除</button>
+        </article>
+      `,
+    )
+    .join("");
+}
+
+function handleLocationPanelClick(event) {
+  const actionEl = event.target.closest("[data-location-action]");
+  if (!actionEl || !state.selectedLocation) return;
+
+  const action = actionEl.dataset.locationAction;
+  if (action === "create") {
+    if (!state.session) {
+      showToast("请先以管理员身份登录");
+      return;
+    }
+    openFootprintDialog({
+      country: "中国",
+      province: state.selectedLocation.province,
+      city: state.selectedLocation.city,
+    });
+  }
+
+  if (action === "delete") {
+    deleteFootprint(actionEl.dataset.deleteId);
+  }
+}
+
+function getLogsForLocation(location) {
+  if (!state.session || !location) return [];
+  return state.logs
+    .filter((log) => {
+      if (location.type === "province") return log.province === location.province;
+      return log.province === location.province && log.city === location.city;
+    })
+    .sort((a, b) => compareLogDate(b, a));
 }
 
 function compareLogDate(a, b) {
@@ -401,6 +817,7 @@ function formatTooltip(regionName) {
   const matchedLogs = getLogsForRegion(regionName);
   const title = `<strong>${regionName}</strong>`;
   if (!state.session) return `${title}<br/>登录后可查看足迹`;
+  if (state.mapMode === "plain") return `${title}<br/>普通地图模式未显示足迹`;
   if (!matchedLogs.length) return `${title}<br/>暂无足迹`;
 
   const rows = matchedLogs
@@ -413,9 +830,12 @@ function formatTooltip(regionName) {
 }
 
 function getLogsForRegion(regionName) {
-  return state.logs
+  return getVisibleLogs()
     .filter((log) => {
-      if (state.currentView.level === "country") return log.province === regionName;
+      if (state.currentView.level === "country") {
+        if (state.fillLevel === "city") return log.city === regionName;
+        return log.province === regionName;
+      }
       return log.province === state.currentView.province && log.city === regionName;
     })
     .sort((a, b) => compareLogDate(b, a));
@@ -424,6 +844,20 @@ function getLogsForRegion(regionName) {
 function handleMapClick(params) {
   if (!params.name) return;
   if (state.currentView.level === "country") {
+    if (state.fillLevel === "city") {
+      const province = state.cityProvinceByName.get(params.name);
+      if (!province) return;
+      if (!state.session) {
+        showToast("请先以管理员身份登录");
+        return;
+      }
+      openFootprintDialog({
+        country: "中国",
+        province,
+        city: params.name,
+      });
+      return;
+    }
     loadProvinceMap(params.name);
     return;
   }
@@ -446,11 +880,12 @@ function openFootprintDialog(locationInfo) {
   els.remarkInput.value = "";
   els.visitMonthInput.value = getCurrentMonthValue();
   els.companionInput.value = companionTags[0].label;
-  els.footprintDialogTitle.textContent = `确认到访 ${locationInfo.city}`;
+  const locationName = getLocationDisplayName(locationInfo);
+  els.footprintDialogTitle.textContent = `确认到访 ${locationName}`;
   els.lockedLocation.innerHTML = `
-    <strong>${locationInfo.country} / ${locationInfo.province} / ${locationInfo.city}</strong>
+    <strong>${escapeHtml(formatLocationPath(locationInfo))}</strong>
     <br />
-    <small>位置已根据地图点击自动锁定</small>
+    <small>位置已自动锁定</small>
   `;
   els.footprintDialog.showModal();
 }
@@ -461,7 +896,9 @@ async function saveFootprint(event) {
 
   els.footprintMessage.textContent = "正在保存...";
   const payload = {
-    ...state.pendingLocation,
+    country: state.pendingLocation.country,
+    province: state.pendingLocation.province,
+    city: state.pendingLocation.city || null,
     visit_date: `${els.visitMonthInput.value}-01`,
     companion_type: els.companionInput.value,
     remark: els.remarkInput.value.trim() || null,
@@ -509,7 +946,7 @@ function renderLedger() {
         <article class="log-card">
           <header>
             <div>
-              <strong>${escapeHtml(log.province || "")} ${escapeHtml(log.city || "")}</strong>
+              <strong>${escapeHtml(getLogLocationLabel(log))}</strong>
               <small>${formatMonth(log.visit_date)} ｜ ${escapeHtml(log.companion_type)}</small>
             </div>
             <button class="delete-button" type="button" data-delete-id="${log.id}">删除</button>
@@ -546,6 +983,18 @@ async function deleteFootprint(id) {
 
 function getCompanionColor(label) {
   return companionColorByLabel[label] || "#7c8792";
+}
+
+function getLocationDisplayName(locationInfo) {
+  return locationInfo.city || locationInfo.province || locationInfo.country;
+}
+
+function formatLocationPath(locationInfo) {
+  return [locationInfo.country, locationInfo.province, locationInfo.city].filter(Boolean).join(" / ");
+}
+
+function getLogLocationLabel(log) {
+  return [log.province, log.city].filter(Boolean).join(" ") || log.country || "未知地点";
 }
 
 function getCurrentMonthValue() {
