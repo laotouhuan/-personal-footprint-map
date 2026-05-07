@@ -38,6 +38,14 @@ for delete
 to authenticated
 using (true);
 
+drop policy if exists "footprint_logs_update_authenticated" on public.footprint_logs;
+create policy "footprint_logs_update_authenticated"
+on public.footprint_logs
+for update
+to authenticated
+using (true)
+with check (true);
+
 create index if not exists footprint_logs_visit_date_idx
 on public.footprint_logs (visit_date desc);
 

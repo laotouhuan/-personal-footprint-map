@@ -8,10 +8,11 @@ const CHINA_CITY_MAP_NAME = "china-cities";
 const REQUEST_TIMEOUT_MS = 8000;
 
 const companionTags = [
-  { label: "家人", color: "#d85857" },
+  { label: "父母", color: "#d85857" },
   { label: "同学", color: "#2f7dd1" },
   { label: "java", color: "#7b56b7" },
   { label: "自己", color: "#2d986e" },
+  { label: "阿姨", color: "#f2c66d" },
 ];
 const companionColorByLabel = Object.fromEntries(companionTags.map((tag) => [tag.label, tag.color]));
 
@@ -82,8 +83,22 @@ const state = {
     adcode: CHINA_ADCODE,
   },
   pendingLocation: null,
+  editingLogId: null,
   hiddenTapCount: 0,
+  currentZoom: 1,
+  currentCenter: null,
+  lastShowCity: false,
+  lastRenderedMapName: null,
 };
+
+const provinceCapitals = new Set([
+  "北京市", "天津市", "石家庄市", "太原市", "呼和浩特市", "沈阳市", "长春市", "哈尔滨市",
+  "上海市", "南京市", "杭州市", "合肥市", "福州市", "南昌市", "济南市", "郑州市",
+  "武汉市", "长沙市", "广州市", "南宁市", "海口市", "成都市", "贵阳市", "昆明市",
+  "拉萨市", "西安市", "兰州市", "西宁市", "银川市", "乌鲁木齐市", "南投县", "香港特别行政区", "澳门特别行政区"
+]);
+
+let playbackInterval = null;
 
 const els = {
   map: document.querySelector("#map"),
@@ -91,6 +106,11 @@ const els = {
   mapTitle: document.querySelector("#mapTitle"),
   viewHint: document.querySelector("#viewHint"),
   legend: document.querySelector("#legend"),
+  filterToggleButton: document.querySelector("#filterToggleButton"),
+  filterDropdown: document.querySelector("#filterDropdown"),
+  yearInput: document.querySelector("#yearInput"),
+  playButton: document.querySelector("#playButton"),
+  yearOverlay: document.querySelector("#yearOverlay"),
   mapModeButtons: document.querySelectorAll("[data-map-mode]"),
   fillLevelControls: document.querySelector("#fillLevelControls"),
   fillLevelButtons: document.querySelectorAll("[data-fill-level]"),
@@ -140,6 +160,18 @@ async function init() {
   state.supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
   state.chart = echarts.init(els.map);
 
+  let roamTimeout;
+  state.chart.on("georoam", () => {
+    clearTimeout(roamTimeout);
+    roamTimeout = setTimeout(() => {
+      saveMapState();
+      const isCityFill = state.currentView.level === "country" && state.fillLevel === "city";
+      if (isCityFill) {
+        state.lastShowCity = (state.currentZoom || 1) >= 4;
+      }
+    }, 150);
+  });
+
   setupStaticUi();
   await loadCountryMap();
   buildLocationIndex().catch((error) => {
@@ -170,7 +202,18 @@ function setupStaticUi() {
   els.drawerScrim.addEventListener("click", closeLedger);
   els.loginForm.addEventListener("submit", login);
   els.footprintForm.addEventListener("submit", saveFootprint);
-  els.legend.addEventListener("change", handleLegendFilterChange);
+  
+  els.filterToggleButton.addEventListener("click", () => {
+    els.filterDropdown.hidden = !els.filterDropdown.hidden;
+  });
+  document.addEventListener("click", (e) => {
+    if (!e.target.closest("#legend")) els.filterDropdown.hidden = true;
+  });
+  els.filterDropdown.addEventListener("change", handleLegendFilterChange);
+
+  els.yearInput.addEventListener("input", triggerYearChange);
+  els.playButton.addEventListener("click", togglePlayback);
+
   els.mapModeButtons.forEach((button) => {
     button.addEventListener("click", () => setMapMode(button.dataset.mapMode));
   });
@@ -187,6 +230,7 @@ function setupStaticUi() {
   document.querySelectorAll("[data-close-footprint]").forEach((button) => {
     button.addEventListener("click", () => {
       state.pendingLocation = null;
+      state.editingLogId = null;
       els.footprintDialog.close();
     });
   });
@@ -199,7 +243,17 @@ function setupStaticUi() {
 }
 
 function renderLegend() {
-  els.legend.innerHTML = companionTags
+  const allSelected = state.activeCompanionFilters.size === companionTags.length;
+  
+  const selectAllHtml = `
+    <label class="legend-item">
+      <input type="checkbox" value="SELECT_ALL" ${allSelected ? "checked" : ""} />
+      <strong>全选</strong>
+    </label>
+    <div class="legend-divider"></div>
+  `;
+
+  const tagsHtml = companionTags
     .map(
       (tag) => `
         <label class="legend-item">
@@ -212,18 +266,32 @@ function renderLegend() {
       `,
     )
     .join("");
+
+  els.filterDropdown.innerHTML = selectAllHtml + tagsHtml;
 }
 
 function handleLegendFilterChange(event) {
   const checkbox = event.target.closest("input[type='checkbox']");
   if (!checkbox) return;
 
-  if (checkbox.checked) {
-    state.activeCompanionFilters.add(checkbox.value);
+  if (checkbox.value === "SELECT_ALL") {
+    if (checkbox.checked) {
+      state.activeCompanionFilters = new Set(companionTags.map((tag) => tag.label));
+    } else {
+      state.activeCompanionFilters.clear();
+    }
   } else {
-    state.activeCompanionFilters.delete(checkbox.value);
+    if (checkbox.checked) {
+      state.activeCompanionFilters.add(checkbox.value);
+    } else {
+      state.activeCompanionFilters.delete(checkbox.value);
+    }
   }
+  
+  renderLegend();
   renderCurrentMap();
+  renderLedger();
+  renderLocationPanel();
 }
 
 function setMapMode(mode) {
@@ -349,6 +417,8 @@ async function loadLogs() {
 }
 
 async function loadCountryMap() {
+  state.currentZoom = 1;
+  state.currentCenter = null;
   const nextView = {
     level: "country",
     mapName: "china",
@@ -363,6 +433,8 @@ async function loadCountryMap() {
 }
 
 async function loadProvinceMap(provinceName) {
+  state.currentZoom = 1;
+  state.currentCenter = null;
   const adcode = provinceAdcodes[provinceName];
   if (!adcode) {
     showToast("暂未找到这个省份的市级地图数据");
@@ -442,45 +514,75 @@ async function renderCurrentMap() {
   const renderTarget = await prepareRenderTarget();
   if (!renderTarget || serial !== state.renderSerial) return;
 
+  saveMapState();
+  const isCityFill = state.currentView.level === "country" && state.fillLevel === "city";
+  const showCity = (state.currentZoom || 1) >= 4;
+  state.lastShowCity = showCity;
+
   const seriesData = buildMapSeriesData();
 
-  state.chart.setOption(
-    {
-      backgroundColor: "#ffffff",
-      tooltip: {
-        trigger: "item",
-        borderWidth: 0,
-        backgroundColor: "rgba(31, 41, 51, 0.9)",
-        textStyle: { color: "#fff" },
-        formatter: (params) => formatTooltip(params.name),
-      },
-      series: [
-        {
-          type: "map",
-          map: renderTarget.mapName,
-          roam: true,
-          selectedMode: false,
-          animationDurationUpdate: 260,
-          label: {
-            show: true,
-            color: "#43505c",
-            fontSize: 11,
-          },
-          emphasis: {
-            label: { color: "#1f2933", fontWeight: 700 },
-            itemStyle: { areaColor: "#f2c66d" },
-          },
-          itemStyle: {
-            areaColor: "#dfe8ea",
-            borderColor: "#aab9c0",
-            borderWidth: 1,
-          },
-          data: seriesData,
-        },
-      ],
+  // 仅在切换地图时使用 notMerge=true（重置），数据更新时用 merge 保留视口
+  const mapChanged = state.lastRenderedMapName !== renderTarget.mapName;
+  state.lastRenderedMapName = renderTarget.mapName;
+
+  const seriesOption = {
+    type: "map",
+    map: renderTarget.mapName,
+    roam: true,
+    scaleLimit: { min: 0.8, max: 30 },
+    selectedMode: false,
+    animationDurationUpdate: 0,
+    label: {
+      show: true,
+      color: "#43505c",
+      fontSize: 11,
+      formatter: function (params) {
+        if (params.name === "南海诸岛") return "南海诸岛";
+        if (isCityFill && !state.lastShowCity) {
+          if (provinceCapitals.has(params.name)) {
+            return state.cityProvinceByName.get(params.name) || params.name;
+          }
+          return "";
+        }
+        return params.name;
+      }
     },
-    true,
-  );
+    emphasis: {
+      label: { color: "#1f2933", fontWeight: 700 },
+      itemStyle: { areaColor: "#f2c66d" },
+    },
+    itemStyle: {
+      areaColor: "#dfe8ea",
+      borderColor: "#aab9c0",
+      borderWidth: 1,
+    },
+    data: seriesData,
+  };
+
+  if (mapChanged) {
+    // 切换地图时需要 notMerge 重置，并指定初始 zoom/center
+    seriesOption.zoom = state.currentZoom || 1;
+    seriesOption.center = state.currentCenter || undefined;
+    state.chart.setOption(
+      {
+        backgroundColor: "#ffffff",
+        tooltip: {
+          trigger: "item",
+          borderWidth: 0,
+          backgroundColor: "rgba(31, 41, 51, 0.9)",
+          textStyle: { color: "#fff" },
+          formatter: (params) => formatTooltip(params.name),
+        },
+        series: [seriesOption],
+      },
+      true,
+    );
+  } else {
+    // 仅更新数据，保留视口位置
+    state.chart.setOption({
+      series: [seriesOption],
+    });
+  }
   setLoading(false);
 }
 
@@ -526,13 +628,58 @@ async function loadChinaCityMap() {
   return state.cityMapPromise;
 }
 
+function decodeCoordinateString(coordinateStr, encodeOffsets) {
+  const result = [];
+  let prevX = encodeOffsets[0];
+  let prevY = encodeOffsets[1];
+
+  for (let i = 0; i < coordinateStr.length; i += 2) {
+    let x = coordinateStr.charCodeAt(i) - 64;
+    let y = coordinateStr.charCodeAt(i + 1) - 64;
+    x = (x >> 1) ^ (-(x & 1));
+    y = (y >> 1) ^ (-(y & 1));
+    x += prevX;
+    y += prevY;
+    prevX = x;
+    prevY = y;
+    result.push([x / 1024, y / 1024]);
+  }
+  return result;
+}
+
+function decodeGeometry(geometry) {
+  if (!geometry.encodeOffsets) return;
+  if (geometry.type === 'Polygon') {
+    geometry.coordinates = geometry.coordinates.map((coordStr, idx) => {
+      return typeof coordStr === 'string' 
+        ? decodeCoordinateString(coordStr, geometry.encodeOffsets[idx]) 
+        : coordStr;
+    });
+  } else if (geometry.type === 'MultiPolygon') {
+    geometry.coordinates = geometry.coordinates.map((polygonCoords, pIdx) => {
+      return polygonCoords.map((coordStr, idx) => {
+        return typeof coordStr === 'string' 
+          ? decodeCoordinateString(coordStr, geometry.encodeOffsets[pIdx][idx])
+          : coordStr;
+      });
+    });
+  }
+}
+
 async function buildChinaCityGeoJson() {
   const features = [];
   const tasks = Object.entries(provinceAdcodes).map(async ([provinceName, adcode]) => {
-    if (adcode === "710000") return;
     try {
       const geoJson = await loadGeoJson(adcode);
-      (geoJson.features || []).forEach((feature) => {
+      let featuresToUse = geoJson.features || [];
+      
+      if (geoJson.UTF8Encoding) {
+        featuresToUse.forEach(f => {
+          if (f.geometry) decodeGeometry(f.geometry);
+        });
+      }
+
+      featuresToUse.forEach((feature) => {
         const cityName = feature.properties?.name;
         if (!cityName) return;
         feature.properties = {
@@ -548,6 +695,17 @@ async function buildChinaCityGeoJson() {
   });
 
   await Promise.all(tasks);
+
+  // 从全国地图中补充南海诸岛
+  const chinaMap = echarts.getMap("china");
+  if (chinaMap && chinaMap.geoJson) {
+    const nanhai = chinaMap.geoJson.features.find(f => f.properties.name === "南海诸岛");
+    if (nanhai) {
+      features.push(nanhai);
+      state.cityProvinceByName.set("南海诸岛", "海南省");
+    }
+  }
+
   state.chinaCityGeoJson = { type: "FeatureCollection", features };
   return state.chinaCityGeoJson;
 }
@@ -560,22 +718,42 @@ function buildMapSeriesData() {
   logs.forEach((log) => {
     const key = getRegionKeyFromLog(log);
     if (!key) return;
-    const current = regionMap.get(key);
-    const shouldReplace = useEarliest ? compareLogDate(log, current || log) < 0 : compareLogDate(log, current || log) > 0;
-    if (!current || shouldReplace) {
-      regionMap.set(key, log);
+    const current = regionMap.get(key) || [];
+    if (current.length === 0) {
+      regionMap.set(key, [log]);
+    } else {
+      const dateDiff = new Date(current[0].visit_date).getTime() - new Date(log.visit_date).getTime();
+      const shouldReplace = useEarliest ? dateDiff < 0 : dateDiff > 0;
+      if (shouldReplace) {
+        regionMap.set(key, [log]);
+      } else if (dateDiff === 0) {
+        if (!current.some(c => c.companion_type === log.companion_type)) {
+          current.push(log);
+        }
+      }
     }
   });
 
-  return Array.from(regionMap.entries()).map(([name, log]) => ({
-    name,
-    value: 1,
-    itemStyle: {
-      areaColor: getCompanionColor(log.companion_type),
-      borderColor: "#ffffff",
-      borderWidth: 1.4,
-    },
-  }));
+  return Array.from(regionMap.entries()).map(([name, logList]) => {
+    const colors = logList.map((l) => getCompanionColor(l.companion_type));
+    let areaColor = colors[0];
+    if (colors.length > 1) {
+      areaColor = {
+        type: 'linear', x: 0, y: 0, x2: 1, y2: 1,
+        colorStops: colors.map((c, i) => ({ offset: i / (colors.length - 1), color: c }))
+      };
+    }
+
+    return {
+      name,
+      value: 1,
+      itemStyle: {
+        areaColor,
+        borderColor: "#ffffff",
+        borderWidth: 1.4,
+      },
+    };
+  });
 }
 
 function getRegionKeyFromLog(log) {
@@ -589,7 +767,14 @@ function getRegionKeyFromLog(log) {
 
 function getVisibleLogs() {
   if (!state.session) return [];
-  return state.logs.filter((log) => state.activeCompanionFilters.has(log.companion_type));
+  const targetYear = els.yearInput.value ? parseInt(els.yearInput.value, 10) : null;
+  return state.logs
+    .filter((log) => state.activeCompanionFilters.has(log.companion_type))
+    .filter((log) => {
+      if (!targetYear) return true;
+      const year = new Date(log.visit_date).getFullYear();
+      return year <= targetYear;
+    });
 }
 
 async function buildLocationIndex() {
@@ -764,11 +949,11 @@ function renderLocationHistory(logs) {
           <div>
             <strong>${escapeHtml(log.companion_type)}</strong>
             <small>${escapeHtml(getLogLocationLabel(log))}</small>
-            ${log.remark ? `<p>${escapeHtml(log.remark)}</p>` : ""}
           </div>
-          <button class="delete-button" type="button" data-location-action="delete" data-delete-id="${escapeHtml(
-            log.id,
-          )}">删除</button>
+          <div class="history-actions">
+            <button class="tool-button" type="button" data-location-action="edit" data-edit-id="${escapeHtml(log.id)}">修改</button>
+            <button class="delete-button" type="button" data-location-action="delete" data-delete-id="${escapeHtml(log.id)}">删除</button>
+          </div>
         </article>
       `,
     )
@@ -792,6 +977,10 @@ function handleLocationPanelClick(event) {
     });
   }
 
+  if (action === "edit") {
+    editFootprint(actionEl.dataset.editId);
+  }
+
   if (action === "delete") {
     deleteFootprint(actionEl.dataset.deleteId);
   }
@@ -799,7 +988,14 @@ function handleLocationPanelClick(event) {
 
 function getLogsForLocation(location) {
   if (!state.session || !location) return [];
+  const targetYear = els.yearInput.value ? parseInt(els.yearInput.value, 10) : null;
   return state.logs
+    .filter((log) => state.activeCompanionFilters.has(log.companion_type))
+    .filter((log) => {
+      if (!targetYear) return true;
+      const year = new Date(log.visit_date).getFullYear();
+      return year <= targetYear;
+    })
     .filter((log) => {
       if (location.type === "province") return log.province === location.province;
       return log.province === location.province && log.city === location.city;
@@ -814,7 +1010,7 @@ function compareLogDate(a, b) {
 }
 
 function formatTooltip(regionName) {
-  const matchedLogs = getLogsForRegion(regionName);
+  const matchedLogs = getAllLogsForRegion(regionName);
   const title = `<strong>${regionName}</strong>`;
   if (!state.session) return `${title}<br/>登录后可查看足迹`;
   if (state.mapMode === "plain") return `${title}<br/>普通地图模式未显示足迹`;
@@ -822,8 +1018,7 @@ function formatTooltip(regionName) {
 
   const rows = matchedLogs
     .map((log) => {
-      const remark = log.remark ? `｜${escapeHtml(log.remark)}` : "";
-      return `${formatMonth(log.visit_date)}｜${escapeHtml(log.companion_type)}${remark}`;
+      return `${formatMonth(log.visit_date)}｜${escapeHtml(log.companion_type)}`;
     })
     .join("<br/>");
   return `${title}<br/>${rows}`;
@@ -831,6 +1026,24 @@ function formatTooltip(regionName) {
 
 function getLogsForRegion(regionName) {
   return getVisibleLogs()
+    .filter((log) => {
+      if (state.currentView.level === "country") {
+        if (state.fillLevel === "city") return log.city === regionName;
+        return log.province === regionName;
+      }
+      return log.province === state.currentView.province && log.city === regionName;
+    })
+    .sort((a, b) => compareLogDate(b, a));
+}
+
+function getAllLogsForRegion(regionName) {
+  const targetYear = els.yearInput.value ? parseInt(els.yearInput.value, 10) : null;
+  return state.logs
+    .filter((log) => {
+      if (!targetYear) return true;
+      const year = new Date(log.visit_date).getFullYear();
+      return year <= targetYear;
+    })
     .filter((log) => {
       if (state.currentView.level === "country") {
         if (state.fillLevel === "city") return log.city === regionName;
@@ -874,13 +1087,42 @@ function handleMapClick(params) {
   });
 }
 
+function editFootprint(id) {
+  const target = state.logs.find((log) => log.id === id);
+  if (!target) return;
+  
+  state.editingLogId = id;
+  state.pendingLocation = {
+    country: target.country,
+    province: target.province,
+    city: target.city
+  };
+  
+  els.footprintMessage.textContent = "";
+  els.visitMonthInput.value = formatMonth(target.visit_date);
+  els.companionInput.value = target.companion_type;
+  els.remarkInput.value = target.remark || "";
+  
+  const locationName = getLocationDisplayName(state.pendingLocation);
+  document.querySelector("#footprintDialogEyebrow").textContent = "修改足迹";
+  els.footprintDialogTitle.textContent = `修改到访 ${locationName}`;
+  els.lockedLocation.innerHTML = `
+    <strong>${escapeHtml(formatLocationPath(state.pendingLocation))}</strong>
+    <br />
+    <small>位置已自动锁定</small>
+  `;
+  els.footprintDialog.showModal();
+}
+
 function openFootprintDialog(locationInfo) {
+  state.editingLogId = null;
   state.pendingLocation = locationInfo;
   els.footprintMessage.textContent = "";
   els.remarkInput.value = "";
   els.visitMonthInput.value = getCurrentMonthValue();
   els.companionInput.value = companionTags[0].label;
   const locationName = getLocationDisplayName(locationInfo);
+  document.querySelector("#footprintDialogEyebrow").textContent = "新增足迹";
   els.footprintDialogTitle.textContent = `确认到访 ${locationName}`;
   els.lockedLocation.innerHTML = `
     <strong>${escapeHtml(formatLocationPath(locationInfo))}</strong>
@@ -904,13 +1146,22 @@ async function saveFootprint(event) {
     remark: els.remarkInput.value.trim() || null,
   };
 
-  const { error } = await state.supabase.from(FOOTPRINT_TABLE).insert(payload);
+  let error;
+  if (state.editingLogId) {
+    const res = await state.supabase.from(FOOTPRINT_TABLE).update(payload).eq("id", state.editingLogId);
+    error = res.error;
+  } else {
+    const res = await state.supabase.from(FOOTPRINT_TABLE).insert(payload);
+    error = res.error;
+  }
+
   if (error) {
     els.footprintMessage.textContent = `保存失败：${error.message}`;
     return;
   }
 
   state.pendingLocation = null;
+  state.editingLogId = null;
   els.footprintDialog.close();
   showToast("足迹已保存");
   await loadLogs();
@@ -935,30 +1186,68 @@ function renderLedger() {
     els.ledgerList.innerHTML = `<p class="empty-state">登录后可以查看足迹簿。</p>`;
     return;
   }
-  if (!state.logs.length) {
-    els.ledgerList.innerHTML = `<p class="empty-state">还没有足迹，进入市级地图后点击城市添加第一条记录。</p>`;
+  
+  const visibleLogs = getVisibleLogs();
+  
+  if (!visibleLogs.length) {
+    els.ledgerList.innerHTML = `<p class="empty-state">当前没有符合筛选条件的足迹记录。</p>`;
     return;
   }
 
-  els.ledgerList.innerHTML = state.logs
-    .map(
-      (log) => `
-        <article class="log-card">
+  let currentMonth = null;
+  const listHtml = visibleLogs
+    .map((log) => {
+      const month = formatMonth(log.visit_date);
+      let monthHeader = "";
+      if (month !== currentMonth) {
+        monthHeader = `<h3 class="timeline-month">${month}</h3>`;
+        currentMonth = month;
+      }
+      return `
+        ${monthHeader}
+        <article class="log-card timeline-card" ${log.remark ? `data-toggle-remark="true"` : ""}>
           <header>
             <div>
               <strong>${escapeHtml(getLogLocationLabel(log))}</strong>
-              <small>${formatMonth(log.visit_date)} ｜ ${escapeHtml(log.companion_type)}</small>
+              <small>
+                ${month} ｜ ${escapeHtml(log.companion_type)}
+              </small>
             </div>
-            <button class="delete-button" type="button" data-delete-id="${log.id}">删除</button>
+            <div class="history-actions">
+              <button class="tool-button" type="button" data-edit-id="${log.id}">修改</button>
+              <button class="delete-button" type="button" data-delete-id="${log.id}">删除</button>
+            </div>
           </header>
-          ${log.remark ? `<p>${escapeHtml(log.remark)}</p>` : ""}
+          ${
+            log.remark
+              ? `
+            <div class="log-remark">
+              <div class="log-remark-inner">
+                <p><strong>📝 备注：</strong>${escapeHtml(log.remark)}</p>
+              </div>
+            </div>
+          `
+              : ""
+          }
         </article>
-      `,
-    )
+      `;
+    })
     .join("");
+
+  els.ledgerList.innerHTML = `<div class="timeline">${listHtml}</div>`;
+
+  els.ledgerList.querySelectorAll("[data-toggle-remark]").forEach((card) => {
+    card.addEventListener("click", (e) => {
+      if (e.target.closest("button")) return;
+      card.classList.toggle("expanded");
+    });
+  });
 
   els.ledgerList.querySelectorAll("[data-delete-id]").forEach((button) => {
     button.addEventListener("click", () => deleteFootprint(button.dataset.deleteId));
+  });
+  els.ledgerList.querySelectorAll("[data-edit-id]").forEach((button) => {
+    button.addEventListener("click", () => editFootprint(button.dataset.editId));
   });
 }
 
@@ -1045,4 +1334,81 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
+}
+
+function saveMapState() {
+  if (!state.chart) return;
+  try {
+    const view = state.chart.getModel().getSeriesByIndex(0).coordinateSystem;
+    if (view && view.getZoom) {
+      state.currentZoom = view.getZoom();
+      state.currentCenter = view.getCenter();
+      return;
+    }
+  } catch (e) {}
+  const option = state.chart.getOption();
+  if (option && option.series && option.series.length > 0) {
+    state.currentZoom = option.series[0].zoom || 1;
+    state.currentCenter = option.series[0].center || null;
+  }
+}
+
+function togglePlayback() {
+  if (playbackInterval) {
+    stopPlayback();
+  } else {
+    startPlayback();
+  }
+}
+
+function startPlayback() {
+  const filteredLogs = state.logs.filter((log) => state.activeCompanionFilters.has(log.companion_type));
+  if (!filteredLogs.length) return;
+
+  const allYears = Array.from(new Set(filteredLogs.map(l => new Date(l.visit_date).getFullYear()))).sort((a, b) => a - b);
+  const endYear = els.yearInput.value ? parseInt(els.yearInput.value, 10) : new Date().getFullYear();
+  
+  const playbackYears = allYears.filter(y => y <= endYear);
+  if (!playbackYears.length) return;
+
+  if (playbackYears[playbackYears.length - 1] < endYear) {
+    playbackYears.push(endYear);
+  }
+
+  let currentIndex = 0;
+  els.yearInput.value = playbackYears[currentIndex];
+  triggerYearChange();
+
+  els.playButton.innerHTML = "⏸ 停止";
+  els.playButton.classList.add("playing");
+
+  playbackInterval = setInterval(() => {
+    currentIndex++;
+    if (currentIndex >= playbackYears.length) {
+      stopPlayback();
+      return;
+    }
+    els.yearInput.value = playbackYears[currentIndex];
+    triggerYearChange();
+  }, 1500);
+}
+
+function stopPlayback() {
+  clearInterval(playbackInterval);
+  playbackInterval = null;
+  els.playButton.innerHTML = "▶ 演示";
+  els.playButton.classList.remove("playing");
+}
+
+function triggerYearChange() {
+  const y = els.yearInput.value;
+  if (y) {
+    els.yearOverlay.textContent = y;
+    els.yearOverlay.hidden = false;
+  } else {
+    els.yearOverlay.hidden = true;
+  }
+  renderCurrentMap();
+  renderLedger();
+  renderLocationPanel();
 }

@@ -33,6 +33,10 @@
             <h1 id="mapTitle">全国足迹</h1>
           </div>
           <div class="map-tools">
+            <div class="time-control">
+              <input type="number" id="yearInput" class="year-input" placeholder="截止年份 (如2024)">
+              <button id="playButton" class="tool-button" type="button" title="播放演示">▶ 演示</button>
+            </div>
             <div class="segmented" aria-label="地图模式">
               <button type="button" data-map-mode="highlight" aria-pressed="true">足迹高亮</button>
               <button type="button" data-map-mode="plain" aria-pressed="false">普通地图</button>
@@ -41,7 +45,10 @@
               <button type="button" data-fill-level="province" aria-pressed="true">省级填色</button>
               <button type="button" data-fill-level="city" aria-pressed="false">市级填色</button>
             </div>
-            <div class="legend" id="legend"></div>
+            <div class="legend" id="legend">
+              <button class="tool-button" id="filterToggleButton" type="button">筛选标签</button>
+              <div class="filter-dropdown" id="filterDropdown" hidden></div>
+            </div>
           </div>
         </div>
 
@@ -55,6 +62,7 @@
         </section>
 
         <div class="map-card">
+          <div id="yearOverlay" class="year-overlay" hidden></div>
           <div id="map"></div>
           <div class="map-loading" id="loadingMask">正在加载地图...</div>
         </div>
@@ -102,7 +110,7 @@
       <form method="dialog" class="modal-panel" id="footprintForm">
         <div class="modal-header">
           <div>
-            <p class="eyebrow">新增足迹</p>
+            <p class="eyebrow" id="footprintDialogEyebrow">新增足迹</p>
             <h2 id="footprintDialogTitle">确认这次到访</h2>
           </div>
           <button class="icon-button" value="cancel" type="button" data-close-footprint aria-label="关闭">×</button>

@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+  <style>
+    #map { width: 800px; height: 600px; border: 1px solid #ccc; }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <div id="info" style="margin-top:10px; font-family:monospace;"></div>
+  <script>
+    const chart = echarts.init(document.getElementById('map'));
+    const infoEl = document.getElementById('info');
+    
+    let zoomCount = 0;
+    chart.on('georoam', (params) => {
+      zoomCount++;
+      try {
+        const view = chart.getModel().getSeriesByIndex(0).coordinateSystem;
+        if (view && view.getZoom) {
+          infoEl.textContent = `Roam #${zoomCount} — zoom: ${view.getZoom().toFixed(3)}, center: [${view.getCenter().map(c=>c.toFixed(2)).join(', ')}]`;
+        }
+      } catch(e) {
+        infoEl.textContent = `Error: ${e.message}`;
+      }
+    });
+
+    async function loadGeo(url) {
+      const r = await fetch(url);
+      return r.json();
+    }
+
+    async function main() {
+      const chinaGeo = await loadGeo('./maps/china/100000_full.json');
+      echarts.registerMap('china', chinaGeo);
+
+      const features = [];
+      const adcodes = ['110000','310000','320000','330000','440000','510000','420000','430000','350000','360000','340000','370000','410000','450000','460000','500000','520000','530000','540000','610000','620000','630000','640000','650000','120000','130000','140000','150000','210000','220000','230000','710000','810000','820000'];
+      
+      for (const adcode of adcodes) {
+        try {
+          const geo = await loadGeo(`./maps/china/${adcode}_full.json`);
+          let feats = geo.features || [];
+          if (geo.UTF8Encoding) {
+            feats.forEach(f => { if (f.geometry) decodeGeometry(f.geometry); });
+          }
+          feats.forEach(f => features.push(f));
+        } catch(e) {}
+      }
+
+      const nanhai = chinaGeo.features.find(f => f.properties.name === '南海诸岛');
+      if (nanhai) features.push(nanhai);
+
+      const cityGeo = { type: 'FeatureCollection', features };
+      echarts.registerMap('china-cities', cityGeo);
+      
+      chart.setOption({
+        series: [{
+          type: 'map',
+          map: 'china-cities',
+          roam: true,
+          zoom: 1,
+          scaleLimit: { min: 0.8, max: 30 },
+          animationDurationUpdate: 0,
+          label: { show: false },
+          itemStyle: { areaColor: '#dfe8ea', borderColor: '#aab9c0', borderWidth: 0.5 },
+          emphasis: { label: { show: true, fontWeight: 700 }, itemStyle: { areaColor: '#f2c66d' } }
+        }]
+      }, true);
+      
+      infoEl.textContent = `Loaded ${features.length} features. Zoom in to test.`;
+    }
+    
+    function decodeCoordinateString(coordinateStr, encodeOffsets) {
+      const result = [];
+      let prevX = encodeOffsets[0];
+      let prevY = encodeOffsets[1];
+      for (let i = 0; i < coordinateStr.length; i += 2) {
+        let x = coordinateStr.charCodeAt(i) - 64;
+        let y = coordinateStr.charCodeAt(i + 1) - 64;
+        x = (x >> 1) ^ (-(x & 1));
+        y = (y >> 1) ^ (-(y & 1));
+        x += prevX;
+        y += prevY;
+        prevX = x;
+        prevY = y;
+        result.push([x / 1024, y / 1024]);
+      }
+      return result;
+    }
+
+    function decodeGeometry(geometry) {
+      if (!geometry.encodeOffsets) return;
+      if (geometry.type === 'Polygon') {
+        geometry.coordinates = geometry.coordinates.map((coordStr, idx) =>
+          typeof coordStr === 'string' ? decodeCoordinateString(coordStr, geometry.encodeOffsets[idx]) : coordStr
+        );
+      } else if (geometry.type === 'MultiPolygon') {
+        geometry.coordinates = geometry.coordinates.map((polygonCoords, pIdx) =>
+          polygonCoords.map((coordStr, idx) =>
+            typeof coordStr === 'string' ? decodeCoordinateString(coordStr, geometry.encodeOffsets[pIdx][idx]) : coordStr
+          )
+        );
+      }
+    }
+
+    main();
+  </script>
+</body>
+</html>
