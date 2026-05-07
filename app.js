@@ -752,7 +752,7 @@ async function buildChinaCityGeoJson() {
 function buildMapSeriesData() {
   const regionMap = new Map();
   const logs = state.mapMode === "highlight" ? getVisibleLogs() : [];
-  const useEarliest = state.currentView.level === "country" && state.fillLevel === "province";
+  const targetYear = getTargetYear();
 
   logs.forEach((log) => {
     const key = getRegionKeyFromLog(log);
@@ -761,8 +761,26 @@ function buildMapSeriesData() {
     if (current.length === 0) {
       regionMap.set(key, [log]);
     } else {
-      const dateDiff = new Date(current[0].visit_date).getTime() - new Date(log.visit_date).getTime();
-      const shouldReplace = useEarliest ? dateDiff > 0 : dateDiff < 0;
+      const currentLog = current[0];
+      const logDate = new Date(log.visit_date);
+      const currentDate = new Date(currentLog.visit_date);
+      const logYear = logDate.getFullYear();
+      const currentYear = currentDate.getFullYear();
+      const dateDiff = currentDate.getTime() - logDate.getTime();
+      
+      let shouldReplace = false;
+      if (targetYear) {
+        if (logYear > currentYear) {
+          shouldReplace = true;
+        } else if (logYear < currentYear) {
+          shouldReplace = false;
+        } else {
+          shouldReplace = dateDiff > 0;
+        }
+      } else {
+        shouldReplace = dateDiff > 0;
+      }
+
       if (shouldReplace) {
         regionMap.set(key, [log]);
       } else if (dateDiff === 0) {
