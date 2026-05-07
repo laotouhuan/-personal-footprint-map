@@ -1,3 +1,6 @@
+/* ═══════════════════════════════════════════════════════════
+ *  1. 配置常量 (Configuration)
+ * ═══════════════════════════════════════════════════════════ */
 const SUPABASE_URL = "https://ayhgkrtzhhxjpmgvnpoz.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_MnoKuiESGpic_JyL_a8WgQ_6UvD43YG";
 const FOOTPRINT_TABLE = "footprint_logs";
@@ -57,6 +60,9 @@ const provinceNameByAdcode = Object.fromEntries(
   Object.entries(provinceAdcodes).map(([name, adcode]) => [adcode, name]),
 );
 
+/* ═══════════════════════════════════════════════════════════
+ *  2. 全局状态 (State)
+ * ═══════════════════════════════════════════════════════════ */
 const state = {
   chart: null,
   supabase: null,
@@ -85,7 +91,9 @@ const state = {
   pendingLocation: null,
   editingLogId: null,
   hiddenTapCount: 0,
-  currentZoom: 1,
+  currentZoom: null,
+  playbackInterval: null,
+  prePlaybackYear: "",
   currentCenter: null,
   lastShowCity: false,
   lastRenderedMapName: null,
@@ -98,7 +106,7 @@ const provinceCapitals = new Set([
   "拉萨市", "西安市", "兰州市", "西宁市", "银川市", "乌鲁木齐市", "南投县", "香港特别行政区", "澳门特别行政区"
 ]);
 
-let playbackInterval = null;
+
 
 const els = {
   map: document.querySelector("#map"),
@@ -144,6 +152,9 @@ const els = {
   toast: document.querySelector("#toast"),
 };
 
+/* ═══════════════════════════════════════════════════════════
+ *  3. 初始化与事件绑定 (Initialization & Events)
+ * ═══════════════════════════════════════════════════════════ */
 document.addEventListener("DOMContentLoaded", init);
 
 async function init() {
@@ -321,6 +332,10 @@ function syncMapControls() {
   els.fillLevelControls.hidden = state.currentView.level !== "country";
 }
 
+
+/* ═══════════════════════════════════════════════════════════
+ *  4. 认证与会话 (Authentication)
+ * ═══════════════════════════════════════════════════════════ */
 async function restoreSession() {
   const { data } = await withTimeout(
     state.supabase.auth.getSession(),
@@ -396,6 +411,10 @@ async function logout() {
   showToast("已退出登录");
 }
 
+
+/* ═══════════════════════════════════════════════════════════
+ *  5. 数据加载 (Data Layer)
+ * ═══════════════════════════════════════════════════════════ */
 async function loadLogs() {
   if (!state.session) {
     state.logs = [];
@@ -419,6 +438,12 @@ async function loadLogs() {
   renderLocationPanel();
 }
 
+
+/* ═══════════════════════════════════════════════════════════
+ *  6. 地图导航 (Map Navigation)
+ *  TODO: v5 - loadCountryMap 增加 countryName 参数支持多国切换
+ *  TODO: v5 - 新增 loadWorldMap() 加载世界地图 3D 地球视图
+ * ═══════════════════════════════════════════════════════════ */
 async function loadCountryMap() {
   clearTimeout(state.roamTimeout);
   state.currentZoom = null;
@@ -480,6 +505,8 @@ async function loadAndRegisterMap(mapName, adcode) {
   }
 }
 
+
+// TODO: v5 - loadGeoJson 支持中国以外国家的路径格式
 async function loadGeoJson(adcode) {
   if (state.geoJsonCache.has(adcode)) return state.geoJsonCache.get(adcode);
 
@@ -518,6 +545,10 @@ function getFeatureNames(geoJson) {
   return new Set((geoJson.features || []).map((feature) => feature.properties?.name).filter(Boolean));
 }
 
+
+/* ═══════════════════════════════════════════════════════════
+ *  7. 地图渲染 (Map Rendering)
+ * ═══════════════════════════════════════════════════════════ */
 async function renderCurrentMap() {
   const serial = ++state.renderSerial;
   const { currentView } = state;
@@ -773,18 +804,27 @@ function getRegionKeyFromLog(log) {
   return log.city || "";
 }
 
-function getVisibleLogs() {
-  if (!state.session) return [];
-  const targetYear = els.yearInput.value ? parseInt(els.yearInput.value, 10) : null;
-  return state.logs
-    .filter((log) => state.activeCompanionFilters.has(log.companion_type))
-    .filter((log) => {
-      if (!targetYear) return true;
-      const year = new Date(log.visit_date).getFullYear();
-      return year <= targetYear;
-    });
+function getTargetYear() {
+  return els.yearInput.value ? parseInt(els.yearInput.value, 10) : null;
 }
 
+function filterByYear(logs) {
+  const targetYear = getTargetYear();
+  if (!targetYear) return logs;
+  return logs.filter((log) => new Date(log.visit_date).getFullYear() <= targetYear);
+}
+
+function getVisibleLogs() {
+  if (!state.session) return [];
+  return filterByYear(
+    state.logs.filter((log) => state.activeCompanionFilters.has(log.companion_type))
+  );
+}
+
+
+/* ═══════════════════════════════════════════════════════════
+ *  8. 搜索与地点管理 (Search & Location)
+ * ═══════════════════════════════════════════════════════════ */
 async function buildLocationIndex() {
   const locations = [];
   const lookup = new Map();
@@ -898,11 +938,7 @@ async function handleSearchResultClick(event) {
   els.clearSearchButton.hidden = false;
   renderLocationPanel();
 
-  if (location.type === "province") {
-    await loadProvinceMap(location.province);
-  } else {
-    await loadProvinceMap(location.province);
-  }
+  await loadProvinceMap(location.province);
 }
 
 function clearLocationSearch() {
@@ -996,14 +1032,7 @@ function handleLocationPanelClick(event) {
 
 function getLogsForLocation(location) {
   if (!state.session || !location) return [];
-  const targetYear = els.yearInput.value ? parseInt(els.yearInput.value, 10) : null;
-  return state.logs
-    .filter((log) => state.activeCompanionFilters.has(log.companion_type))
-    .filter((log) => {
-      if (!targetYear) return true;
-      const year = new Date(log.visit_date).getFullYear();
-      return year <= targetYear;
-    })
+  return getVisibleLogs()
     .filter((log) => {
       if (location.type === "province") return log.province === location.province;
       return log.province === location.province && log.city === location.city;
@@ -1018,7 +1047,7 @@ function compareLogDate(a, b) {
 }
 
 function formatTooltip(regionName) {
-  const matchedLogs = getAllLogsForRegion(regionName);
+  const matchedLogs = getLogsForRegion(regionName, { ignoreTagFilter: true });
   const title = `<strong>${regionName}</strong>`;
   if (!state.session) return `${title}<br/>登录后可查看足迹`;
   if (state.mapMode === "plain") return `${title}<br/>普通地图模式未显示足迹`;
@@ -1032,26 +1061,11 @@ function formatTooltip(regionName) {
   return `${title}<br/>${rows}`;
 }
 
-function getLogsForRegion(regionName) {
-  return getVisibleLogs()
-    .filter((log) => {
-      if (state.currentView.level === "country") {
-        if (state.fillLevel === "city") return log.city === regionName;
-        return log.province === regionName;
-      }
-      return log.province === state.currentView.province && log.city === regionName;
-    })
-    .sort((a, b) => compareLogDate(b, a));
-}
-
-function getAllLogsForRegion(regionName) {
-  const targetYear = els.yearInput.value ? parseInt(els.yearInput.value, 10) : null;
-  return state.logs
-    .filter((log) => {
-      if (!targetYear) return true;
-      const year = new Date(log.visit_date).getFullYear();
-      return year <= targetYear;
-    })
+function getLogsForRegion(regionName, { ignoreTagFilter = false } = {}) {
+  const baseLogs = ignoreTagFilter
+    ? filterByYear(state.logs)
+    : getVisibleLogs();
+  return baseLogs
     .filter((log) => {
       if (state.currentView.level === "country") {
         if (state.fillLevel === "city") return log.city === regionName;
@@ -1095,6 +1109,10 @@ function handleMapClick(params) {
   });
 }
 
+
+/* ═══════════════════════════════════════════════════════════
+ *  9. 足迹 CRUD (Footprint Operations)
+ * ═══════════════════════════════════════════════════════════ */
 function editFootprint(id) {
   const target = state.logs.find((log) => log.id === id);
   if (!target) return;
@@ -1176,6 +1194,10 @@ async function saveFootprint(event) {
   renderCurrentMap();
 }
 
+
+/* ═══════════════════════════════════════════════════════════
+ * 10. 足迹簿抽屉 (Ledger Drawer)
+ * ═══════════════════════════════════════════════════════════ */
 function openLedger() {
   renderLedger();
   els.ledgerDrawer.classList.add("open");
@@ -1278,6 +1300,10 @@ async function deleteFootprint(id) {
   renderCurrentMap();
 }
 
+
+/* ═══════════════════════════════════════════════════════════
+ * 12. 工具函数 (Utilities)
+ * ═══════════════════════════════════════════════════════════ */
 function getCompanionColor(label) {
   return companionColorByLabel[label] || "#7c8792";
 }
@@ -1361,8 +1387,12 @@ function saveMapState() {
   }
 }
 
+
+/* ═══════════════════════════════════════════════════════════
+ * 11. 时间轴与播放 (Playback)
+ * ═══════════════════════════════════════════════════════════ */
 function togglePlayback() {
-  if (playbackInterval) {
+  if (state.playbackInterval) {
     stopPlayback();
   } else {
     startPlayback();
@@ -1392,7 +1422,7 @@ function startPlayback() {
   els.playButton.innerHTML = "⏸ 停止";
   els.playButton.classList.add("playing");
 
-  playbackInterval = setInterval(() => {
+  state.playbackInterval = setInterval(() => {
     currentIndex++;
     if (currentIndex >= playbackYears.length) {
       els.yearInput.value = state.prePlaybackYear || "";
@@ -1406,8 +1436,8 @@ function startPlayback() {
 }
 
 function stopPlayback() {
-  clearInterval(playbackInterval);
-  playbackInterval = null;
+  clearInterval(state.playbackInterval);
+  state.playbackInterval = null;
   els.playButton.innerHTML = "▶ 演示";
   els.playButton.classList.remove("playing");
 }
