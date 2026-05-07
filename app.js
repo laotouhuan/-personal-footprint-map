@@ -160,14 +160,17 @@ async function init() {
   state.supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
   state.chart = echarts.init(els.map);
 
-  let roamTimeout;
   state.chart.on("georoam", () => {
-    clearTimeout(roamTimeout);
-    roamTimeout = setTimeout(() => {
+    clearTimeout(state.roamTimeout);
+    state.roamTimeout = setTimeout(() => {
       saveMapState();
       const isCityFill = state.currentView.level === "country" && state.fillLevel === "city";
       if (isCityFill) {
-        state.lastShowCity = (state.currentZoom || 1) >= 4;
+        const nextShowCity = (state.currentZoom || 1) >= 9;
+        if (state.lastShowCity !== nextShowCity) {
+          state.lastShowCity = nextShowCity;
+          renderCurrentMap();
+        }
       }
     }, 150);
   });
@@ -417,7 +420,8 @@ async function loadLogs() {
 }
 
 async function loadCountryMap() {
-  state.currentZoom = 1;
+  clearTimeout(state.roamTimeout);
+  state.currentZoom = null;
   state.currentCenter = null;
   const nextView = {
     level: "country",
@@ -433,7 +437,8 @@ async function loadCountryMap() {
 }
 
 async function loadProvinceMap(provinceName) {
-  state.currentZoom = 1;
+  clearTimeout(state.roamTimeout);
+  state.currentZoom = null;
   state.currentCenter = null;
   const adcode = provinceAdcodes[provinceName];
   if (!adcode) {
@@ -489,6 +494,16 @@ async function loadGeoJson(adcode) {
       const response = await fetchWithTimeout(url, REQUEST_TIMEOUT_MS);
       if (!response.ok) throw new Error(`${response.status} ${response.statusText}`.trim());
       const geoJson = await response.json();
+      
+      if (geoJson.UTF8Encoding) {
+        if (geoJson.features) {
+          geoJson.features.forEach(f => {
+            if (f.geometry) decodeGeometry(f.geometry);
+          });
+        }
+        geoJson.UTF8Encoding = false;
+      }
+
       state.geoJsonCache.set(adcode, geoJson);
       return geoJson;
     } catch (error) {
@@ -514,16 +529,15 @@ async function renderCurrentMap() {
   const renderTarget = await prepareRenderTarget();
   if (!renderTarget || serial !== state.renderSerial) return;
 
-  saveMapState();
+  // 仅在同一张地图上更新数据时保存视口，切换地图时跳过，让 ECharts 自动居中新地图
+  const mapChanged = state.lastRenderedMapName !== renderTarget.mapName;
+  if (!mapChanged) saveMapState();
+  state.lastRenderedMapName = renderTarget.mapName;
+
   const isCityFill = state.currentView.level === "country" && state.fillLevel === "city";
-  const showCity = (state.currentZoom || 1) >= 4;
-  state.lastShowCity = showCity;
+  state.lastShowCity = (state.currentZoom || 1) >= 9;
 
   const seriesData = buildMapSeriesData();
-
-  // 仅在切换地图时使用 notMerge=true（重置），数据更新时用 merge 保留视口
-  const mapChanged = state.lastRenderedMapName !== renderTarget.mapName;
-  state.lastRenderedMapName = renderTarget.mapName;
 
   const seriesOption = {
     type: "map",
@@ -532,6 +546,8 @@ async function renderCurrentMap() {
     scaleLimit: { min: 0.8, max: 30 },
     selectedMode: false,
     animationDurationUpdate: 0,
+    ...(state.currentZoom != null ? { zoom: state.currentZoom } : {}),
+    ...(state.currentCenter ? { center: state.currentCenter } : {}),
     label: {
       show: true,
       color: "#43505c",
@@ -560,9 +576,7 @@ async function renderCurrentMap() {
   };
 
   if (mapChanged) {
-    // 切换地图时需要 notMerge 重置，并指定初始 zoom/center
-    seriesOption.zoom = state.currentZoom || 1;
-    seriesOption.center = state.currentCenter || undefined;
+    // 切换地图时需要 notMerge 重置
     state.chart.setOption(
       {
         backgroundColor: "#ffffff",
@@ -672,12 +686,6 @@ async function buildChinaCityGeoJson() {
     try {
       const geoJson = await loadGeoJson(adcode);
       let featuresToUse = geoJson.features || [];
-      
-      if (geoJson.UTF8Encoding) {
-        featuresToUse.forEach(f => {
-          if (f.geometry) decodeGeometry(f.geometry);
-        });
-      }
 
       featuresToUse.forEach((feature) => {
         const cityName = feature.properties?.name;
@@ -723,7 +731,7 @@ function buildMapSeriesData() {
       regionMap.set(key, [log]);
     } else {
       const dateDiff = new Date(current[0].visit_date).getTime() - new Date(log.visit_date).getTime();
-      const shouldReplace = useEarliest ? dateDiff < 0 : dateDiff > 0;
+      const shouldReplace = useEarliest ? dateDiff > 0 : dateDiff < 0;
       if (shouldReplace) {
         regionMap.set(key, [log]);
       } else if (dateDiff === 0) {
@@ -1365,6 +1373,8 @@ function startPlayback() {
   const filteredLogs = state.logs.filter((log) => state.activeCompanionFilters.has(log.companion_type));
   if (!filteredLogs.length) return;
 
+  state.prePlaybackYear = els.yearInput.value;
+
   const allYears = Array.from(new Set(filteredLogs.map(l => new Date(l.visit_date).getFullYear()))).sort((a, b) => a - b);
   const endYear = els.yearInput.value ? parseInt(els.yearInput.value, 10) : new Date().getFullYear();
   
@@ -1385,6 +1395,8 @@ function startPlayback() {
   playbackInterval = setInterval(() => {
     currentIndex++;
     if (currentIndex >= playbackYears.length) {
+      els.yearInput.value = state.prePlaybackYear || "";
+      triggerYearChange();
       stopPlayback();
       return;
     }
