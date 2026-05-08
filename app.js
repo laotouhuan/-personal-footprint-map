@@ -82,11 +82,12 @@ const state = {
   renderSerial: 0,
   selectedLocation: null,
   currentView: {
-    level: "country",
-    mapName: "china",
-    title: "全国足迹",
+    level: "world",
+    mapName: "world",
+    title: "世界足迹",
     province: "",
-    adcode: CHINA_ADCODE,
+    adcode: "world",
+    country: "世界",
   },
   pendingLocation: null,
   editingLogId: null,
@@ -97,6 +98,7 @@ const state = {
   currentCenter: null,
   lastShowCity: false,
   lastRenderedMapName: null,
+  offscreenChart: null,
 };
 
 const provinceCapitals = new Set([
@@ -150,6 +152,11 @@ const els = {
   closeLedgerButton: document.querySelector("#closeLedgerButton"),
   brandButton: document.querySelector("#brandButton"),
   toast: document.querySelector("#toast"),
+  offscreenMap: document.querySelector("#offscreenMap"),
+};
+
+const countryCodeMap = {
+  "afghanistan":"af","albania":"al","algeria":"dz","andorra":"ad","angola":"ao","antigua and barbuda":"ag","argentina":"ar","armenia":"am","australia":"au","austria":"at","azerbaijan":"az","bahamas":"bs","bahrain":"bh","bangladesh":"bd","barbados":"bb","belarus":"by","belgium":"be","belize":"bz","benin":"bj","bhutan":"bt","bolivia":"bo","bosnia and herzegovina":"ba","botswana":"bw","brazil":"br","brunei":"bn","bulgaria":"bg","burkina faso":"bf","burundi":"bi","cabo verde":"cv","cambodia":"kh","cameroon":"cm","canada":"ca","central african republic":"cf","chad":"td","chile":"cl","china":"cn","colombia":"co","comoros":"km","congo":"cg","costa rica":"cr","croatia":"hr","cuba":"cu","cyprus":"cy","czech republic":"cz","democratic republic of the congo":"cd","denmark":"dk","djibouti":"dj","dominica":"dm","dominican republic":"do","ecuador":"ec","egypt":"eg","el salvador":"sv","equatorial guinea":"gq","eritrea":"er","estonia":"ee","eswatini":"sz","ethiopia":"et","fiji":"fj","finland":"fi","france":"fr","gabon":"ga","gambia":"gm","georgia":"ge","germany":"de","ghana":"gh","greece":"gr","grenada":"gd","guatemala":"gt","guinea":"gn","guinea-bissau":"gw","guyana":"gy","haiti":"ht","honduras":"hn","hungary":"hu","iceland":"is","india":"in","indonesia":"id","iran":"ir","iraq":"iq","ireland":"ie","israel":"il","italy":"it","jamaica":"jm","japan":"jp","jordan":"jo","kazakhstan":"kz","kenya":"ke","kiribati":"ki","kuwait":"kw","kyrgyzstan":"kg","laos":"la","latvia":"lv","lebanon":"lb","lesotho":"ls","liberia":"lr","libya":"ly","liechtenstein":"li","lithuania":"lt","luxembourg":"lu","madagascar":"mg","malawi":"mw","malaysia":"my","maldives":"mv","mali":"ml","malta":"mt","marshall islands":"mh","mauritania":"mr","mauritius":"mu","mexico":"mx","micronesia":"fm","moldova":"md","monaco":"mc","mongolia":"mn","montenegro":"me","morocco":"ma","mozambique":"mz","myanmar":"mm","namibia":"na","nauru":"nr","nepal":"np","netherlands":"nl","new zealand":"nz","nicaragua":"ni","niger":"ne","nigeria":"ng","north korea":"kp","north macedonia":"mk","norway":"no","oman":"om","pakistan":"pk","palau":"pw","palestine":"ps","panama":"pa","papua new guinea":"pg","paraguay":"py","peru":"pe","philippines":"ph","poland":"pl","portugal":"pt","qatar":"qa","romania":"ro","russia":"ru","rwanda":"rw","saint kitts and nevis":"kn","saint lucia":"lc","saint vincent and the grenadines":"vc","samoa":"ws","san marino":"sm","sao tome and principe":"st","saudi arabia":"sa","senegal":"sn","serbia":"rs","seychelles":"sc","sierra leone":"sl","singapore":"sg","slovakia":"sk","slovenia":"si","solomon islands":"sb","somalia":"so","south africa":"za","south korea":"kr","south sudan":"ss","spain":"es","sri lanka":"lk","sudan":"sd","suriname":"sr","sweden":"se","switzerland":"ch","syria":"sy","tajikistan":"tj","tanzania":"tz","thailand":"th","timor-leste":"tl","togo":"tg","tonga":"to","trinidad and tobago":"tt","tunisia":"tn","turkey":"tr","turkmenistan":"tm","tuvalu":"tv","uganda":"ug","ukraine":"ua","united arab emirates":"ae","united kingdom":"gb","united states":"us","united states of america":"us","uruguay":"uy","uzbekistan":"uz","vanuatu":"vu","vatican city":"va","venezuela":"ve","vietnam":"vn","yemen":"ye","zambia":"zm","zimbabwe":"zw"
 };
 
 /* ═══════════════════════════════════════════════════════════
@@ -170,6 +177,9 @@ async function init() {
 
   state.supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
   state.chart = echarts.init(els.map);
+  if (els.offscreenMap) {
+    state.offscreenChart = echarts.init(els.offscreenMap);
+  }
 
   state.chart.on("georoam", () => {
     clearTimeout(state.roamTimeout);
@@ -187,7 +197,7 @@ async function init() {
   });
 
   setupStaticUi();
-  await loadCountryMap();
+  await loadWorldMap();
   buildLocationIndex().catch((error) => {
     showToast(`地点索引准备失败：${error.message}`);
   });
@@ -210,7 +220,13 @@ function setupStaticUi() {
 
   els.loginButton.addEventListener("click", openLoginDialog);
   els.logoutButton.addEventListener("click", logout);
-  els.backButton.addEventListener("click", loadCountryMap);
+  els.backButton.addEventListener("click", () => {
+    if (state.currentView.level === "province") {
+      loadCountryMap(state.currentView.country);
+    } else if (state.currentView.level === "country") {
+      loadWorldMap();
+    }
+  });
   els.ledgerButton.addEventListener("click", openLedger);
   els.closeLedgerButton.addEventListener("click", closeLedger);
   els.drawerScrim.addEventListener("click", closeLedger);
@@ -329,7 +345,7 @@ function syncMapControls() {
   els.fillLevelButtons.forEach((button) => {
     button.setAttribute("aria-pressed", String(button.dataset.fillLevel === state.fillLevel));
   });
-  els.fillLevelControls.hidden = state.currentView.level !== "country";
+  els.fillLevelControls.hidden = state.currentView.mapName !== "china";
 }
 
 
@@ -444,20 +460,54 @@ async function loadLogs() {
  *  TODO: v5 - loadCountryMap 增加 countryName 参数支持多国切换
  *  TODO: v5 - 新增 loadWorldMap() 加载世界地图 3D 地球视图
  * ═══════════════════════════════════════════════════════════ */
-async function loadCountryMap() {
+async function loadWorldMap() {
   clearTimeout(state.roamTimeout);
   state.currentZoom = null;
   state.currentCenter = null;
   const nextView = {
-    level: "country",
-    mapName: "china",
-    title: "全国足迹",
+    level: "world",
+    mapName: "world",
+    title: "世界足迹",
     province: "",
-    adcode: CHINA_ADCODE,
+    adcode: "world",
+    country: "世界",
   };
-  const loaded = await loadAndRegisterMap("china", CHINA_ADCODE);
+  const loaded = await loadAndRegisterMap("world", "world");
   if (!loaded) return;
   state.currentView = nextView;
+  renderCurrentMap();
+}
+
+async function loadCountryMap(countryName = "China", isoCode = "") {
+  clearTimeout(state.roamTimeout);
+  state.currentZoom = null;
+  state.currentCenter = null;
+  
+  if (countryName === "China" || countryName === "china" || countryName === "中国") {
+    const nextView = {
+      level: "country",
+      mapName: "china",
+      title: "全国足迹",
+      province: "",
+      adcode: CHINA_ADCODE,
+      country: "中国",
+    };
+    const loaded = await loadAndRegisterMap("china", CHINA_ADCODE);
+    if (!loaded) return;
+    state.currentView = nextView;
+  } else {
+    const nextView = {
+      level: "country",
+      mapName: countryName,
+      title: `${countryName} 足迹`,
+      province: "",
+      adcode: countryName,
+      country: countryName,
+    };
+    const loaded = await loadAndRegisterMap(countryName, countryName, isoCode);
+    if (!loaded) return;
+    state.currentView = nextView;
+  }
   renderCurrentMap();
 }
 
@@ -477,6 +527,7 @@ async function loadProvinceMap(provinceName) {
     title: provinceName,
     province: provinceName,
     adcode,
+    country: "中国",
   };
   const loaded = await loadAndRegisterMap(nextView.mapName, adcode);
   if (!loaded) return;
@@ -484,7 +535,7 @@ async function loadProvinceMap(provinceName) {
   renderCurrentMap();
 }
 
-async function loadAndRegisterMap(mapName, adcode) {
+async function loadAndRegisterMap(mapName, adcode, isoCode = "") {
   if (echarts.getMap(mapName)) {
     setLoading(false);
     return true;
@@ -492,7 +543,7 @@ async function loadAndRegisterMap(mapName, adcode) {
 
   setLoading(true, "正在加载地图...");
   try {
-    const geoJson = await loadGeoJson(adcode);
+    const geoJson = await loadGeoJson(adcode, isoCode);
     echarts.registerMap(mapName, geoJson);
     state.mapRegions.set(mapName, getFeatureNames(geoJson));
     setLoading(false);
@@ -507,13 +558,29 @@ async function loadAndRegisterMap(mapName, adcode) {
 
 
 // TODO: v5 - loadGeoJson 支持中国以外国家的路径格式
-async function loadGeoJson(adcode) {
+async function loadGeoJson(adcode, isoCode = "") {
   if (state.geoJsonCache.has(adcode)) return state.geoJsonCache.get(adcode);
 
-  const urls = [
-    `${LOCAL_CHINA_GEOJSON_BASE}/${adcode}_full.json`,
-    `${GEOJSON_BASE}/${adcode}_full.json`,
-  ];
+  let urls = [];
+  if (adcode === "world") {
+    urls = ["./maps/world.json"];
+  } else if (adcode === CHINA_ADCODE || provinceNameByAdcode[adcode]) {
+    urls = [
+      `${LOCAL_CHINA_GEOJSON_BASE}/${adcode}_full.json`,
+      `${GEOJSON_BASE}/${adcode}_full.json`,
+    ];
+  } else {
+    // 懒加载外部国家数据：优先使用传入的 isoCode，其次在 countryCodeMap 中查找（大小写不敏感）
+    const hcCode = isoCode
+      ? isoCode.toLowerCase()
+      : (countryCodeMap[adcode.toLowerCase()] || adcode.toLowerCase());
+    urls = [
+      `https://code.highcharts.com/mapdata/countries/${hcCode}/${hcCode}-all.geo.json`,
+      `https://cdn.jsdelivr.net/npm/@highcharts/map-collection@2.2.0/countries/${hcCode}/${hcCode}-all.geo.json`
+    ];
+    setLoading(true, "加载中（Loading...）");
+  }
+
   const errors = [];
 
   for (const url of urls) {
@@ -549,26 +616,160 @@ function getFeatureNames(geoJson) {
 /* ═══════════════════════════════════════════════════════════
  *  7. 地图渲染 (Map Rendering)
  * ═══════════════════════════════════════════════════════════ */
+function getFeatureMetrics(feature) {
+  let minLng = 180, maxLng = -180, minLat = 90, maxLat = -90;
+  const processCoords = (coords) => {
+    coords.forEach(coord => {
+      if (typeof coord[0] === 'number') {
+        minLng = Math.min(minLng, coord[0]);
+        maxLng = Math.max(maxLng, coord[0]);
+        minLat = Math.min(minLat, coord[1]);
+        maxLat = Math.max(maxLat, coord[1]);
+      } else {
+        processCoords(coord);
+      }
+    });
+  };
+  if (feature.geometry && feature.geometry.coordinates) {
+    processCoords(feature.geometry.coordinates);
+    return {
+      center: feature.properties?.cp || [(minLng + maxLng) / 2, (minLat + maxLat) / 2],
+      lonSpan: maxLng - minLng,
+      latSpan: maxLat - minLat
+    };
+  }
+  return { center: feature.properties?.cp || [0, 0], lonSpan: 0, latSpan: 0 };
+}
+
+function updateOffscreenWorldMap(seriesData) {
+  if (!state.offscreenChart) return null;
+  state.offscreenChart.setOption({
+    animation: false,
+    backgroundColor: '#0a101d', // 海洋颜色
+    series: [{
+      type: 'map',
+      map: 'world',
+      left: 0, top: 0, right: 0, bottom: 0,
+      boundingCoords: [[-180, 90], [180, -90]],
+      itemStyle: {
+        areaColor: '#1a242f',
+        borderColor: '#2b3846',
+      },
+      data: seriesData
+    }]
+  }, true);
+  return state.offscreenChart;
+}
+
 async function renderCurrentMap() {
   const serial = ++state.renderSerial;
   const { currentView } = state;
   els.mapTitle.textContent = currentView.title;
   els.viewHint.textContent = getViewHint();
-  els.backButton.hidden = currentView.level === "country";
+  els.backButton.hidden = currentView.level === "world";
+  if (currentView.level === "country") els.backButton.textContent = "返回世界";
+  if (currentView.level === "province") els.backButton.textContent = "返回国家";
   syncMapControls();
 
   const renderTarget = await prepareRenderTarget();
   if (!renderTarget || serial !== state.renderSerial) return;
 
-  // 仅在同一张地图上更新数据时保存视口，切换地图时跳过，让 ECharts 自动居中新地图
   const mapChanged = state.lastRenderedMapName !== renderTarget.mapName;
   if (!mapChanged) saveMapState();
   state.lastRenderedMapName = renderTarget.mapName;
 
-  const isCityFill = state.currentView.level === "country" && state.fillLevel === "city";
+  const isCityFill = state.currentView.level === "country" && state.fillLevel === "city" && state.currentView.mapName === "china";
   state.lastShowCity = (state.currentZoom || 1) >= 9;
 
   const seriesData = buildMapSeriesData();
+  const isWorld = state.currentView.level === "world";
+
+  if (isWorld) {
+    const offChart = updateOffscreenWorldMap(seriesData);
+    
+    const scatterData = [];
+    const worldGeo = echarts.getMap("world");
+    
+    // 针对拥有海外领土或跨越 180 度经线的特殊国家，手动校准其本土核心中心点
+    const manualCenters = {
+      "United States of America": [-98.5795, 39.8283], // 美国本土
+      "United States": [-98.5795, 39.8283],
+      "France": [2.2137, 46.2276], // 法国本土
+      "United Kingdom": [-3.4359, 55.3780], // 英国本土
+      "Russia": [95.0, 60.0] // 俄罗斯中西部核心区
+    };
+
+    if (worldGeo && worldGeo.geoJSON) {
+      worldGeo.geoJSON.features.forEach(f => {
+        const name = f.properties.name || f.properties["hc-a2"];
+        if (name) {
+          const metrics = getFeatureMetrics(f);
+          let center = manualCenters[name] || f.properties.cp || metrics.center;
+          const baseSize = Math.sqrt(metrics.lonSpan * Math.abs(metrics.latSpan));
+          
+          // 动态缩放热区：最小 25，上限调高至 400，放大系数从 2.5 提升到 3.5，让大国热区更广
+          const symbolSize = Math.max(25, Math.min(400, baseSize * 3.5));
+
+          scatterData.push({
+            name,
+            value: [center[0], center[1], 0],
+            symbolSize: symbolSize,
+            isoCode: f.properties["hc-a2"]
+          });
+        }
+      });
+    }
+
+    setTimeout(() => {
+      state.chart.setOption({
+        backgroundColor: "#1f2933",
+        tooltip: {
+          show: true,
+          trigger: "item",
+          borderWidth: 0,
+          backgroundColor: "rgba(31, 41, 51, 0.9)",
+          textStyle: { color: "#fff" },
+          formatter: (params) => {
+            if (params.seriesType === 'scatter3D') {
+               return `<strong>${params.name}</strong><br/><small>点击进入下钻</small>`;
+            }
+            return formatTooltip(params.name);
+          },
+        },
+        globe: {
+          baseTexture: offChart ? offChart.getRenderedCanvas({ pixelRatio: 1 }) : null,
+          shading: 'color',
+          viewControl: {
+            autoRotate: false,
+            distance: 180,
+            targetCoord: [104, 35], // 默认定位在中国上空
+            animationDurationUpdate: 1500,
+            animationEasingUpdate: 'cubicInOut'
+          }
+        },
+        series: [{
+          type: 'scatter3D',
+          coordinateSystem: 'globe',
+          blendMode: 'lighter',
+          symbolSize: function (val, params) {
+            return params.data.symbolSize;
+          },
+          itemStyle: {
+            color: '#ffffff',
+            opacity: 0.001 // 完全隐形，防止视觉污染
+          },
+          emphasis: {
+            itemStyle: {
+              opacity: 0.001
+            }
+          },
+          data: scatterData
+        }]
+      }, true);
+      setLoading(false);
+    }, 100);
+    return;
+  }
 
   const seriesOption = {
     type: "map",
@@ -580,7 +781,7 @@ async function renderCurrentMap() {
     ...(state.currentZoom != null ? { zoom: state.currentZoom } : {}),
     ...(state.currentCenter ? { center: state.currentCenter } : {}),
     label: {
-      show: true,
+      show: !isWorld,
       color: "#43505c",
       fontSize: 11,
       formatter: function (params) {
@@ -595,7 +796,7 @@ async function renderCurrentMap() {
       }
     },
     emphasis: {
-      label: { color: "#1f2933", fontWeight: 700 },
+      label: { show: true, color: "#1f2933", fontWeight: 700 },
       itemStyle: { areaColor: "#f2c66d" },
     },
     itemStyle: {
@@ -607,7 +808,6 @@ async function renderCurrentMap() {
   };
 
   if (mapChanged) {
-    // 切换地图时需要 notMerge 重置
     state.chart.setOption(
       {
         backgroundColor: "#ffffff",
@@ -623,8 +823,8 @@ async function renderCurrentMap() {
       true,
     );
   } else {
-    // 仅更新数据，保留视口位置
     state.chart.setOption({
+      backgroundColor: "#ffffff",
       series: [seriesOption],
     });
   }
@@ -632,9 +832,10 @@ async function renderCurrentMap() {
 }
 
 function getViewHint() {
+  if (state.currentView.level === "world") return "世界地图：点击国家进入下钻";
   if (state.currentView.level === "province") return "点击城市新增足迹";
   if (state.fillLevel === "city") return "市级填色：点击城市新增足迹";
-  return "省级填色：点击省份进入市级地图";
+  return "省级/州级填色：点击省州进入地图";
 }
 
 async function prepareRenderTarget() {
@@ -814,8 +1015,11 @@ function buildMapSeriesData() {
 }
 
 function getRegionKeyFromLog(log) {
+  if (state.currentView.level === "world") {
+    return log.country;
+  }
   if (state.currentView.level === "country") {
-    if (state.fillLevel === "city") return log.city || "";
+    if (state.fillLevel === "city" && state.currentView.mapName === "china") return log.city || "";
     return log.province;
   }
   if (log.province !== state.currentView.province) return "";
@@ -873,6 +1077,7 @@ async function buildLocationIndex() {
     const location = {
       key: `city:${provinceName}:${cityName}`,
       type: "city",
+      country: "中国",
       province: provinceName,
       city: cityName,
       adcode: String(feature.properties?.adcode || ""),
@@ -883,6 +1088,28 @@ async function buildLocationIndex() {
     locations.push(location);
     lookup.set(location.key, location);
   });
+
+  const worldGeo = echarts.getMap("world");
+  if (worldGeo && worldGeo.geoJSON) {
+    worldGeo.geoJSON.features.forEach((f) => {
+      const name = f.properties.name || f.properties["hc-a2"];
+      if (name && name !== "China" && name !== "中国") {
+        const location = {
+          key: `country:${name}`,
+          type: "country",
+          country: name,
+          province: "",
+          city: "",
+          adcode: name,
+          label: name,
+          meta: "国家",
+          searchText: name.toLocaleLowerCase(),
+        };
+        locations.push(location);
+        lookup.set(location.key, location);
+      }
+    });
+  }
 
   state.locationIndex = locations;
   state.locationLookup = lookup;
@@ -951,12 +1178,20 @@ async function handleSearchResultClick(event) {
   if (!location) return;
 
   state.selectedLocation = location;
-  els.locationSearchInput.value = location.type === "city" ? `${location.province} ${location.city}` : location.province;
+  let inputValue = location.province;
+  if (location.type === "city") inputValue = `${location.province} ${location.city}`;
+  if (location.type === "country") inputValue = location.country;
+  
+  els.locationSearchInput.value = inputValue;
   els.searchResults.hidden = true;
   els.clearSearchButton.hidden = false;
   renderLocationPanel();
 
-  await loadProvinceMap(location.province);
+  if (location.type === "country") {
+    await loadCountryMap(location.country);
+  } else {
+    await loadProvinceMap(location.province);
+  }
 }
 
 function clearLocationSearch() {
@@ -1085,8 +1320,11 @@ function getLogsForRegion(regionName, { ignoreTagFilter = false } = {}) {
     : getVisibleLogs();
   return baseLogs
     .filter((log) => {
+      if (state.currentView.level === "world") {
+        return log.country === regionName;
+      }
       if (state.currentView.level === "country") {
-        if (state.fillLevel === "city") return log.city === regionName;
+        if (state.fillLevel === "city" && state.currentView.mapName === "china") return log.city === regionName;
         return log.province === regionName;
       }
       return log.province === state.currentView.province && log.city === regionName;
@@ -1096,8 +1334,70 @@ function getLogsForRegion(regionName, { ignoreTagFilter = false } = {}) {
 
 function handleMapClick(params) {
   if (!params.name) return;
+
+  if (state.currentView.level === "world") {
+    const isoCode = params.data && params.data.isoCode ? params.data.isoCode : "";
+    const targetCenter = params.data && params.data.value ? params.data.value : null;
+
+    if (targetCenter) {
+      const mapEl = els.map;
+      const w = mapEl.offsetWidth;
+      const h = mapEl.offsetHeight;
+
+      // 获取点击位置（scatter3D 的事件对象）
+      const evt = params.event && params.event.event ? params.event.event : params.event;
+      let clickX = w / 2, clickY = h / 2;
+      if (evt && evt.offsetX != null) {
+        clickX = evt.offsetX;
+        clickY = evt.offsetY;
+      }
+
+      // 计算平移量：将点击点移到画布中央（模拟"旋转居中"）
+      const dx = (w / 2 - clickX) / 6;  // 除以缩放倍数做归一化
+      const dy = (h / 2 - clickY) / 6;
+
+      // 设置 CSS 变量驱动 @keyframes drill-dive
+      mapEl.style.setProperty('--tx', `${dx}px`);
+      mapEl.style.setProperty('--ty', `${dy}px`);
+      mapEl.style.transformOrigin = `${clickX}px ${clickY}px`;
+
+      // === 阶段一：触发俯冲动画 (2s) ===
+      mapEl.classList.add('drill-animating');
+
+      // === 阶段二：俯冲到 40% 时，云层从上下涌入 ===
+      setTimeout(() => {
+        els.loadingMask.classList.add("drill-transition");
+        setLoading(true, "");
+      }, 800);
+
+      // === 阶段三：动画结束后，在云层下切换到 2D 地图，然后云层打开 ===
+      setTimeout(async () => {
+        // 移除俯冲动画（此时被云层完全遮盖）
+        mapEl.classList.remove('drill-animating');
+        mapEl.style.removeProperty('--tx');
+        mapEl.style.removeProperty('--ty');
+        mapEl.style.transformOrigin = '';
+
+        // 加载 2D 地图
+        await loadCountryMap(params.name, isoCode);
+
+        // 2D 地图就绪 → 云层打开，揭开地图
+        els.loadingMask.classList.remove("drill-transition");
+        els.loadingMask.classList.add("drill-fade-out");
+        setLoading(true, ""); // 保持 mask 可见，让云层动画播放
+        setTimeout(() => {
+          els.loadingMask.classList.remove("drill-fade-out");
+          setLoading(false);
+        }, 950);
+      }, 2100);
+    } else {
+      loadCountryMap(params.name, isoCode);
+    }
+    return;
+  }
+
   if (state.currentView.level === "country") {
-    if (state.fillLevel === "city") {
+    if (state.fillLevel === "city" && state.currentView.mapName === "china") {
       const province = state.cityProvinceByName.get(params.name);
       if (!province) return;
       if (!state.session) {
@@ -1111,7 +1411,56 @@ function handleMapClick(params) {
       });
       return;
     }
-    loadProvinceMap(params.name);
+
+    // 2D 视角下钻（无遮罩，纯粹的缩放与淡出淡入）
+    const mapEl = els.map;
+    const w = mapEl.offsetWidth;
+    const h = mapEl.offsetHeight;
+
+    // 获取点击位置
+    const evt = params.event && params.event.event ? params.event.event : params.event;
+    let clickX = w / 2, clickY = h / 2;
+    if (evt && evt.offsetX != null) {
+      clickX = evt.offsetX;
+      clickY = evt.offsetY;
+    }
+
+    // 计算平移量，让点击区域尽量靠向中心
+    const dx = (w / 2 - clickX) / 1.5;
+    const dy = (h / 2 - clickY) / 1.5;
+
+    mapEl.style.setProperty('--tx', `${dx}px`);
+    mapEl.style.setProperty('--ty', `${dy}px`);
+    mapEl.style.transformOrigin = `${clickX}px ${clickY}px`;
+
+    // 触发简单的缩放淡出动画
+    mapEl.classList.add('drill-simple-animating');
+
+    // 动画结束时加载数据并淡入新地图
+    setTimeout(async () => {
+      // 保持加载状态，防止渲染时的卡顿感
+      setLoading(true, ""); 
+      
+      // 加载并渲染省份/州市地图
+      await loadProvinceMap(params.name);
+
+      // 移除淡出动画
+      mapEl.classList.remove('drill-simple-animating');
+      mapEl.style.removeProperty('--tx');
+      mapEl.style.removeProperty('--ty');
+      mapEl.style.transformOrigin = '';
+
+      setLoading(false);
+
+      // 触发淡入动画
+      mapEl.classList.add('drill-simple-fade-in');
+      
+      // 动画完成后清理 class
+      setTimeout(() => {
+        mapEl.classList.remove('drill-simple-fade-in');
+      }, 600);
+    }, 600);
+
     return;
   }
 
@@ -1121,9 +1470,9 @@ function handleMapClick(params) {
   }
 
   openFootprintDialog({
-    country: "中国",
-    province: state.currentView.province,
-    city: params.name,
+    country: state.currentView.country,
+    province: state.currentView.level === "province" ? state.currentView.province : params.name,
+    city: state.currentView.level === "province" ? params.name : null,
   });
 }
 

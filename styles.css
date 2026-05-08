@@ -437,6 +437,149 @@ h1 {
   display: none;
 }
 
+/* ── 下钻：云层效果 ── */
+.map-loading.drill-transition,
+.map-loading.drill-fade-out {
+  background: transparent;
+  overflow: hidden;
+  pointer-events: auto;
+}
+
+/* 云朵基底 */
+.map-loading.drill-transition::before,
+.map-loading.drill-transition::after,
+.map-loading.drill-fade-out::before,
+.map-loading.drill-fade-out::after {
+  content: '';
+  position: absolute;
+  left: -15%;
+  width: 130%;
+  height: 65%;
+  border-radius: 60% 70% 50% 40% / 50%;
+  filter: blur(18px);
+}
+
+/* ── 云层聚拢（俯冲时云从上下涌入） ── */
+.map-loading.drill-transition::before {
+  top: -8%;
+  background:
+    radial-gradient(ellipse at 30% 70%, rgba(255,255,255,0.95) 0%, transparent 70%),
+    radial-gradient(ellipse at 70% 60%, rgba(240,245,250,0.9) 0%, transparent 60%),
+    rgba(255, 255, 255, 0.88);
+  box-shadow:
+    30px 40px 60px rgba(255,255,255,0.7),
+    -20px 60px 80px rgba(220,230,240,0.5);
+  animation: cloud-gather-top 0.5s ease-out both;
+}
+
+.map-loading.drill-transition::after {
+  bottom: -8%;
+  background:
+    radial-gradient(ellipse at 60% 30%, rgba(255,255,255,0.95) 0%, transparent 70%),
+    radial-gradient(ellipse at 25% 40%, rgba(240,245,250,0.9) 0%, transparent 60%),
+    rgba(255, 255, 255, 0.88);
+  box-shadow:
+    -30px -40px 60px rgba(255,255,255,0.7),
+    20px -60px 80px rgba(220,230,240,0.5);
+  animation: cloud-gather-bottom 0.5s ease-out both;
+}
+
+@keyframes cloud-gather-top {
+  from { transform: translateY(-110%); }
+  to   { transform: translateY(0); }
+}
+@keyframes cloud-gather-bottom {
+  from { transform: translateY(110%); }
+  to   { transform: translateY(0); }
+}
+
+/* ── 云层打开（揭开 2D 地图） ── */
+.map-loading.drill-fade-out::before {
+  top: -8%;
+  background:
+    radial-gradient(ellipse at 30% 70%, rgba(255,255,255,0.95) 0%, transparent 70%),
+    radial-gradient(ellipse at 70% 60%, rgba(240,245,250,0.9) 0%, transparent 60%),
+    rgba(255, 255, 255, 0.88);
+  box-shadow:
+    30px 40px 60px rgba(255,255,255,0.7),
+    -20px 60px 80px rgba(220,230,240,0.5);
+  animation: cloud-part-top 0.9s ease-in both;
+}
+
+.map-loading.drill-fade-out::after {
+  bottom: -8%;
+  background:
+    radial-gradient(ellipse at 60% 30%, rgba(255,255,255,0.95) 0%, transparent 70%),
+    radial-gradient(ellipse at 25% 40%, rgba(240,245,250,0.9) 0%, transparent 60%),
+    rgba(255, 255, 255, 0.88);
+  box-shadow:
+    -30px -40px 60px rgba(255,255,255,0.7),
+    20px -60px 80px rgba(220,230,240,0.5);
+  animation: cloud-part-bottom 0.9s ease-in both;
+}
+
+@keyframes cloud-part-top {
+  from { transform: translateY(0); opacity: 1; }
+  to   { transform: translateY(-110%); opacity: 0.3; }
+}
+@keyframes cloud-part-bottom {
+  from { transform: translateY(0); opacity: 1; }
+  to   { transform: translateY(110%); opacity: 0.3; }
+}
+
+/* 下钻俯冲动画 —— 分两段：先平缓居中，再加速冲刺 */
+@keyframes drill-dive {
+  0% {
+    transform: scale(1) translate(var(--tx), var(--ty));
+    filter: blur(0px) brightness(1);
+  }
+  35% {
+    transform: scale(1.4) translate(var(--tx), var(--ty));
+    filter: blur(0px) brightness(1.05);
+  }
+  100% {
+    transform: scale(6) translate(var(--tx), var(--ty));
+    filter: blur(2px) brightness(1.2);
+  }
+}
+
+#map.drill-animating {
+  animation: drill-dive 2s cubic-bezier(0.25, 0.1, 0.25, 1) both;
+  pointer-events: none;
+}
+
+/* ── 简单的 2D 下钻动画（无遮罩） ── */
+#map.drill-simple-animating {
+  animation: drill-dive-simple 0.6s cubic-bezier(0.25, 0.1, 0.25, 1) both;
+  pointer-events: none;
+}
+
+@keyframes drill-dive-simple {
+  0% {
+    transform: scale(1) translate(0, 0);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(3) translate(var(--tx), var(--ty));
+    opacity: 0;
+  }
+}
+
+#map.drill-simple-fade-in {
+  animation: drill-fade-in-simple 0.6s ease-out both;
+}
+
+@keyframes drill-fade-in-simple {
+  0% {
+    transform: scale(0.9);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
 .drawer {
   position: fixed;
   top: 0;
