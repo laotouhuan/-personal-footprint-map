@@ -11,11 +11,11 @@ const CHINA_CITY_MAP_NAME = "china-cities";
 const REQUEST_TIMEOUT_MS = 8000;
 
 const companionTags = [
-  { label: "父母", color: "#d85857" },
-  { label: "同学", color: "#2f7dd1" },
-  { label: "java", color: "#7b56b7" },
-  { label: "自己", color: "#2d986e" },
-  { label: "阿姨", color: "#f2c66d" },
+  { label: "父母", color: "#FF6B6B" },
+  { label: "同学", color: "#4ECDC4" },
+  { label: "java", color: "#A569BD" },
+  { label: "自己", color: "#F4D03F" },
+  { label: "阿姨", color: "#EB984E" },
 ];
 const companionColorByLabel = Object.fromEntries(companionTags.map((tag) => [tag.label, tag.color]));
 
@@ -116,7 +116,6 @@ const els = {
   map: document.querySelector("#map"),
   loadingMask: document.querySelector("#loadingMask"),
   mapTitle: document.querySelector("#mapTitle"),
-  viewHint: document.querySelector("#viewHint"),
   legend: document.querySelector("#legend"),
   filterToggleButton: document.querySelector("#filterToggleButton"),
   filterDropdown: document.querySelector("#filterDropdown"),
@@ -410,9 +409,9 @@ async function restoreSession() {
 function updateAuthUi() {
   if (state.isSharedMode) return;
   const isAuthed = Boolean(state.session);
-  els.authStatus.textContent = isAuthed ? "已登录" : "未登录";
-  els.authStatus.hidden = !isAuthed && !location.pathname.endsWith("/admin") && location.hash !== "#admin";
-  els.loginButton.hidden = isAuthed || (els.authStatus.hidden);
+  // 对于管理员，不再显示“已登录”状态文字，仅用隐藏判断
+  els.authStatus.hidden = true;
+  els.loginButton.hidden = isAuthed || (!isAuthed && !location.pathname.endsWith("/admin") && location.hash !== "#admin");
   els.logoutButton.hidden = !isAuthed;
   els.ledgerButton.hidden = !isAuthed;
   if (els.shareButton) els.shareButton.hidden = !isAuthed;
@@ -526,7 +525,7 @@ async function loadWorldMap() {
   const nextView = {
     level: "world",
     mapName: "world",
-    title: "世界足迹",
+    title: "Globe",
     province: "",
     adcode: "world",
     country: "世界",
@@ -546,7 +545,7 @@ async function loadCountryMap(countryName = "China", isoCode = "") {
     const nextView = {
       level: "country",
       mapName: "china",
-      title: "全国足迹",
+      title: "China",
       province: "",
       adcode: CHINA_ADCODE,
       country: "中国",
@@ -558,7 +557,7 @@ async function loadCountryMap(countryName = "China", isoCode = "") {
     const nextView = {
       level: "country",
       mapName: countryName,
-      title: `${countryName} 足迹`,
+      title: countryName,
       province: "",
       adcode: countryName,
       country: countryName,
@@ -724,10 +723,15 @@ async function renderCurrentMap() {
   const serial = ++state.renderSerial;
   const { currentView } = state;
   els.mapTitle.textContent = currentView.title;
-  els.viewHint.textContent = getViewHint();
+  
+  // 返回按钮逻辑：在世界地图隐藏，在中国/国家级显示“返回世界”，在省级显示“返回全国”
   els.backButton.hidden = currentView.level === "world";
-  if (currentView.level === "country") els.backButton.textContent = "返回世界";
-  if (currentView.level === "province") els.backButton.textContent = "返回国家";
+  if (currentView.level === "country") {
+    els.backButton.textContent = "🔙 返回世界";
+  } else if (currentView.level === "province") {
+    els.backButton.textContent = "🔙 返回全国";
+  }
+  
   syncMapControls();
 
   const renderTarget = await prepareRenderTarget();
@@ -745,6 +749,9 @@ async function renderCurrentMap() {
 
   if (isWorld) {
     const offChart = updateOffscreenWorldMap(seriesData);
+    if (offChart) {
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
     
     const scatterData = [];
     const worldGeo = echarts.getMap("world");
@@ -770,7 +777,7 @@ async function renderCurrentMap() {
           const symbolSize = Math.max(25, Math.min(400, baseSize * 3.5));
 
           scatterData.push({
-            name,
+            name: name,
             value: [center[0], center[1], 0],
             symbolSize: symbolSize,
             isoCode: f.properties["hc-a2"]
@@ -781,7 +788,7 @@ async function renderCurrentMap() {
 
     setTimeout(() => {
       state.chart.setOption({
-        backgroundColor: "#1f2933",
+        backgroundColor: "#00050a", // 深邃的太空背景色
         tooltip: {
           show: true,
           trigger: "item",
@@ -790,7 +797,7 @@ async function renderCurrentMap() {
           textStyle: { color: "#fff" },
           formatter: (params) => {
             if (params.seriesType === 'scatter3D') {
-               return `<strong>${params.name}</strong><br/><small>点击进入下钻</small>`;
+               return `<strong>${params.name}</strong>`;
             }
             return formatTooltip(params.name);
           },
@@ -798,8 +805,17 @@ async function renderCurrentMap() {
         globe: {
           baseTexture: offChart ? offChart.getRenderedCanvas({ pixelRatio: 1 }) : null,
           shading: 'color',
+          atmosphere: {
+            show: true,
+            offset: 8,
+            color: '#3060ba',
+            glowPower: 6
+          },
+          environment: '#00050a', 
           viewControl: {
-            autoRotate: false,
+            autoRotate: true,
+            autoRotateSpeed: 2,
+            autoRotateAfterStill: 5, // 闲置 5 秒后自动恢复旋转
             distance: 180,
             targetCoord: [104, 35], // 默认定位在中国上空
             animationDurationUpdate: 1500,
@@ -890,12 +906,6 @@ async function renderCurrentMap() {
   setLoading(false);
 }
 
-function getViewHint() {
-  if (state.currentView.level === "world") return "世界地图：点击国家进入下钻";
-  if (state.currentView.level === "province") return "点击城市新增足迹";
-  if (state.fillLevel === "city") return "市级填色：点击城市新增足迹";
-  return "省级/州级填色：点击省州进入地图";
-}
 
 async function prepareRenderTarget() {
   if (state.currentView.level === "country" && state.fillLevel === "city") {
@@ -1075,7 +1085,15 @@ function buildMapSeriesData() {
 
 function getRegionKeyFromLog(log) {
   if (state.currentView.level === "world") {
-    return log.country;
+    // Return English name for offscreen ECharts world map matching
+    const map = {
+      "中国": "China", "美国": "United States", "日本": "Japan", "韩国": "Korea",
+      "英国": "United Kingdom", "法国": "France", "德国": "Germany", "俄罗斯": "Russia",
+      "澳大利亚": "Australia", "加拿大": "Canada", "意大利": "Italy", "西班牙": "西班牙",
+      "泰国": "Thailand", "新加坡": "Singapore", "马来西亚": "Malaysia", "越南": "Vietnam",
+      "United States of America": "United States"
+    };
+    return map[log.country] || log.country;
   }
   if (state.currentView.level === "country") {
     if (state.fillLevel === "city" && state.currentView.mapName === "china") return log.city || "";
@@ -1361,7 +1379,7 @@ function compareLogDate(a, b) {
 }
 
 function formatTooltip(regionName) {
-  const matchedLogs = getLogsForRegion(regionName, { ignoreTagFilter: true });
+  const matchedLogs = getLogsForRegion(regionName, { ignoreTagFilter: false });
   const title = `<strong>${regionName}</strong>`;
   if (!state.session && !state.isSharedMode) return `${title}<br/>登录后可查看足迹`;
   if (state.mapMode === "plain") return `${title}<br/>普通地图模式未显示足迹`;
@@ -1458,6 +1476,9 @@ function handleMapClick(params) {
   }
 
   if (state.currentView.level === "country") {
+    // 仅中国地图支持省份下钻，其他国家由于暂无二级地图，点击不触发下钻及动画
+    if (state.currentView.mapName !== "china") return;
+
     if (state.fillLevel === "city" && state.currentView.mapName === "china") {
       const province = state.cityProvinceByName.get(params.name);
       if (!province) return;
@@ -1812,7 +1833,11 @@ function formatLocationPath(locationInfo) {
 }
 
 function getLogLocationLabel(log) {
-  return [log.province, log.city].filter(Boolean).join(" ") || log.country || "未知地点";
+  if (state.currentView.level === "world") {
+    return [log.country, log.province].filter(Boolean).join(" ") || log.country || "未知地点";
+  } else {
+    return [log.province, log.city].filter(Boolean).join(" ") || log.province || log.country || "未知地点";
+  }
 }
 
 function getCurrentMonthValue() {

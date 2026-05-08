@@ -1,22 +1,24 @@
 :root {
-  --bg: #eef3f2;
-  --panel: #ffffff;
-  --ink: #1f2933;
-  --muted: #65727f;
-  --line: #d7e0e5;
-  --accent: #256f68;
-  --accent-strong: #174f4a;
-  --danger: #b9443f;
-  --shadow: 0 18px 50px rgba(21, 42, 46, 0.13);
+  --bg: #f4f7f6;
+  --panel: rgba(255, 255, 255, 0.9);
+  --ink: #111827;
+  --muted: #6b7280;
+  --line: rgba(229, 231, 235, 0.8);
+  --accent: #4f46e5;
+  --accent-strong: #4338ca;
+  --danger: #ef4444;
+  --shadow: 0 10px 40px -10px rgba(0,0,0,0.15);
 }
 
 * {
   box-sizing: border-box;
 }
 
+html,
 body {
   margin: 0;
-  min-height: 100vh;
+  height: 100%;
+  overflow: hidden;
   background: var(--bg);
   color: var(--ink);
   font-family:
@@ -43,9 +45,10 @@ button:disabled {
 }
 
 .app-shell {
-  min-height: 100vh;
+  height: 100vh;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 .topbar {
@@ -105,11 +108,13 @@ button:disabled {
 .tool-button,
 .icon-button {
   border: 1px solid var(--line);
-  background: white;
+  background: rgba(255, 255, 255, 0.9);
   color: var(--ink);
-  border-radius: 8px;
+  border-radius: 10px;
   min-height: 38px;
   padding: 8px 14px;
+  font-weight: 600;
+  transition: all 0.2s ease;
 }
 
 .tool-button.primary {
@@ -121,6 +126,8 @@ button:disabled {
 .tool-button:hover,
 .icon-button:hover {
   border-color: var(--accent);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.05);
 }
 
 .tool-button.primary:hover {
@@ -138,32 +145,52 @@ button:disabled {
 
 .map-stage {
   flex: 1;
-  padding: 28px 32px 34px;
   display: flex;
   flex-direction: column;
-  gap: 18px;
-  min-height: 0;
+  padding: 0;
+  overflow: hidden;
+  position: relative;
 }
 
-.map-header {
+.floating-panel {
+  position: absolute;
+  z-index: 10;
+  background: rgba(255, 255, 255, 0.65);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  border-radius: 16px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.08);
+  padding: 20px;
+}
+
+.floating-header {
+  top: 24px;
+  left: 24px;
   display: flex;
-  justify-content: space-between;
-  gap: 24px;
-  align-items: end;
+  flex-direction: column;
+  width: 320px;
+  max-height: calc(100vh - 120px);
+  overflow-y: auto;
 }
 
-.map-tools {
-  display: grid;
-  justify-items: end;
-  gap: 10px;
+.floating-header h1 {
+  font-size: 32px;
+  font-weight: 800;
+  letter-spacing: -0.5px;
+  color: var(--ink);
 }
 
-.eyebrow {
-  margin: 0 0 6px;
-  color: var(--accent);
-  font-size: 13px;
-  font-weight: 700;
+.floating-tools {
+  top: 24px;
+  right: 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 12px;
 }
+
+
 
 h1,
 h2 {
@@ -231,12 +258,12 @@ h1 {
 .map-card {
   position: relative;
   flex: 1;
-  min-height: 560px;
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 8px;
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  border-radius: 0;
+  border: none;
   overflow: hidden;
-  box-shadow: var(--shadow);
 }
 
 .year-overlay {
@@ -255,9 +282,13 @@ h1 {
 .segmented {
   display: inline-flex;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 10px;
   overflow: hidden;
-  background: white;
+  background: rgba(255, 255, 255, 0.8);
+}
+
+.segmented[hidden] {
+  display: none !important;
 }
 
 .segmented button {
@@ -278,22 +309,37 @@ h1 {
   color: white;
 }
 
-.time-control {
+.input-group {
   display: flex;
-  gap: 8px;
   align-items: center;
+  background: rgba(255, 255, 255, 0.7);
+  padding: 6px;
+  border-radius: 12px;
+  gap: 8px;
+  width: 100%;
+  min-height: 52px;
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  box-shadow: inset 0 2px 4px rgba(0,0,0,0.02);
+}
+
+.input-group input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  outline: none;
+  padding: 6px 12px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.input-group input::placeholder {
+  color: var(--muted);
+  font-weight: 400;
 }
 
 .year-input {
-  width: 140px;
-  padding: 6px 12px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  font-size: 13px;
-  outline: none;
-}
-.year-input:focus {
-  border-color: var(--accent);
+  width: 100px;
 }
 
 .playing {
@@ -302,19 +348,14 @@ h1 {
   border-color: var(--accent) !important;
 }
 
-.search-panel {
-  display: grid;
-  gap: 10px;
+
+
+.search-group {
+  /* 移除之前的 margin-bottom */
 }
 
-.search-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 10px;
-}
-
-.search-row input {
-  min-height: 42px;
+.input-group:not(:last-child) {
+  margin-bottom: 12px;
 }
 
 .search-results,
@@ -322,7 +363,7 @@ h1 {
   border: 1px solid var(--line);
   background: var(--panel);
   border-radius: 8px;
-  box-shadow: 0 10px 30px rgba(21, 42, 46, 0.08);
+  margin-top: 8px;
 }
 
 .search-results {
@@ -420,7 +461,6 @@ h1 {
 #map {
   width: 100%;
   height: 100%;
-  min-height: 560px;
 }
 
 .map-loading {

@@ -13,59 +13,58 @@
           <span class="brand-mark">足</span>
           <span>
             <strong>足迹地图</strong>
-            <small id="viewHint">中国省级地图</small>
           </span>
         </button>
 
         <div class="toolbar">
-          <button class="tool-button" id="backButton" type="button" hidden>返回全国</button>
+          <div class="legend" id="legend">
+            <button class="tool-button" id="filterToggleButton" type="button">筛选标签</button>
+            <div class="filter-dropdown" id="filterDropdown" hidden></div>
+          </div>
           <button class="tool-button" id="shareButton" type="button" hidden>分享</button>
           <button class="tool-button" id="ledgerButton" type="button" hidden>足迹簿</button>
-          <span class="status-pill" id="authStatus" hidden>未登录</span>
+          <span class="status-pill" id="authStatus" hidden>访客模式 (只读)</span>
           <button class="tool-button" id="loginButton" type="button" hidden>管理员登录</button>
           <button class="tool-button" id="logoutButton" type="button" hidden>退出</button>
         </div>
       </header>
 
-      <main class="map-stage">
-        <div class="map-header">
-          <div>
-            <p class="eyebrow">中国 2D 行政区足迹</p>
-            <h1 id="mapTitle">全国足迹</h1>
-          </div>
-          <div class="map-tools">
-            <div class="time-control">
-              <input type="number" id="yearInput" class="year-input" placeholder="截止年份 (如2024)">
-              <button id="playButton" class="tool-button" type="button" title="播放演示">▶ 演示</button>
+      <main class="map-stage" style="padding: 0;">
+        <div class="map-card" id="mapCard">
+          <div id="yearOverlay" class="year-overlay" hidden></div>
+          <div id="map"></div>
+          <div class="map-loading" id="loadingMask">正在加载地图...</div>
+          
+          <div class="floating-panel floating-header">
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px;">
+              <h1 id="mapTitle">全国足迹</h1>
+              <button class="tool-button" id="backButton" type="button" hidden>🔙 返回</button>
             </div>
+            
+            <div class="input-group time-control">
+              <input type="number" id="yearInput" class="year-input" placeholder="截止年份">
+              <button id="playButton" class="tool-button primary" type="button" title="播放演示">▶ 演示</button>
+            </div>
+
+            <div class="input-group search-group">
+              <input id="locationSearchInput" type="search" placeholder="搜索具体地点..." autocomplete="off" />
+              <button class="tool-button" id="clearSearchButton" type="button" hidden>清除</button>
+            </div>
+
+            <div class="search-results" id="searchResults" hidden></div>
+            <div class="location-panel" id="locationPanel" hidden></div>
+          </div>
+          
+          <div class="floating-panel floating-tools">
             <div class="segmented" aria-label="地图模式">
               <button type="button" data-map-mode="highlight" aria-pressed="true">足迹高亮</button>
               <button type="button" data-map-mode="plain" aria-pressed="false">普通地图</button>
             </div>
-            <div class="segmented" id="fillLevelControls" aria-label="填色层级">
+            <div class="segmented" id="fillLevelControls" aria-label="填色层级" hidden>
               <button type="button" data-fill-level="province" aria-pressed="true">省级填色</button>
               <button type="button" data-fill-level="city" aria-pressed="false">市级填色</button>
             </div>
-            <div class="legend" id="legend">
-              <button class="tool-button" id="filterToggleButton" type="button">筛选标签</button>
-              <div class="filter-dropdown" id="filterDropdown" hidden></div>
-            </div>
           </div>
-        </div>
-
-        <section class="search-panel" aria-label="地点搜索">
-          <div class="search-row">
-            <input id="locationSearchInput" type="search" placeholder="搜索省份或城市" autocomplete="off" />
-            <button class="tool-button" id="clearSearchButton" type="button" hidden>清除</button>
-          </div>
-          <div class="search-results" id="searchResults" hidden></div>
-          <div class="location-panel" id="locationPanel" hidden></div>
-        </section>
-
-        <div class="map-card">
-          <div id="yearOverlay" class="year-overlay" hidden></div>
-          <div id="map"></div>
-          <div class="map-loading" id="loadingMask">正在加载地图...</div>
         </div>
       </main>
     </div>
