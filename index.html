@@ -19,9 +19,10 @@
 
         <div class="toolbar">
           <button class="tool-button" id="backButton" type="button" hidden>返回全国</button>
+          <button class="tool-button" id="shareButton" type="button" hidden>分享</button>
           <button class="tool-button" id="ledgerButton" type="button" hidden>足迹簿</button>
-          <span class="status-pill" id="authStatus">未登录</span>
-          <button class="tool-button primary" id="loginButton" type="button">管理员登录</button>
+          <span class="status-pill" id="authStatus" hidden>未登录</span>
+          <button class="tool-button" id="loginButton" type="button" hidden>管理员登录</button>
           <button class="tool-button" id="logoutButton" type="button" hidden>退出</button>
         </div>
       </header>
@@ -137,6 +138,48 @@
         <div class="modal-actions">
           <button class="tool-button" value="cancel" type="button" data-close-footprint>取消</button>
           <button class="tool-button primary" type="submit">保存足迹</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="modal" id="shareDialog">
+      <form method="dialog" class="modal-panel" id="shareForm">
+        <div class="modal-header">
+          <div>
+            <p class="eyebrow">生成分享链接</p>
+            <h2>与朋友分享足迹</h2>
+          </div>
+          <button class="icon-button" value="cancel" type="button" data-close-share aria-label="关闭">×</button>
+        </div>
+
+        <label>
+          有效期
+          <select id="shareExpireInput">
+            <option value="7">7天后失效</option>
+            <option value="30">30天后失效</option>
+            <option value="1">1天后失效</option>
+            <option value="0">永久有效</option>
+          </select>
+        </label>
+
+        <label>
+          备注标签 (可选)
+          <input id="shareLabelInput" type="text" placeholder="例如：发给小明" maxlength="50" />
+        </label>
+
+        <p class="form-message" id="shareMessage"></p>
+        
+        <div id="shareResultArea" hidden>
+          <label>分享链接</label>
+          <div style="display: flex; gap: 8px;">
+            <input id="shareLinkInput" type="text" readonly style="flex: 1;" />
+            <button class="tool-button primary" id="copyShareButton" type="button">复制</button>
+          </div>
+        </div>
+
+        <div class="modal-actions">
+          <button class="tool-button" value="cancel" type="button" data-close-share>关闭</button>
+          <button class="tool-button primary" id="generateShareButton" type="submit">生成链接</button>
         </div>
       </form>
     </dialog>

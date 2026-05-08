@@ -99,6 +99,8 @@ const state = {
   lastShowCity: false,
   lastRenderedMapName: null,
   offscreenChart: null,
+  isSharedMode: false,
+  shareToken: null,
 };
 
 const provinceCapitals = new Set([
@@ -133,6 +135,16 @@ const els = {
   authStatus: document.querySelector("#authStatus"),
   loginButton: document.querySelector("#loginButton"),
   logoutButton: document.querySelector("#logoutButton"),
+  shareButton: document.querySelector("#shareButton"),
+  shareDialog: document.querySelector("#shareDialog"),
+  shareForm: document.querySelector("#shareForm"),
+  shareExpireInput: document.querySelector("#shareExpireInput"),
+  shareLabelInput: document.querySelector("#shareLabelInput"),
+  shareMessage: document.querySelector("#shareMessage"),
+  shareResultArea: document.querySelector("#shareResultArea"),
+  shareLinkInput: document.querySelector("#shareLinkInput"),
+  copyShareButton: document.querySelector("#copyShareButton"),
+  generateShareButton: document.querySelector("#generateShareButton"),
   loginDialog: document.querySelector("#loginDialog"),
   loginForm: document.querySelector("#loginForm"),
   emailInput: document.querySelector("#emailInput"),
@@ -201,9 +213,15 @@ async function init() {
   buildLocationIndex().catch((error) => {
     showToast(`地点索引准备失败：${error.message}`);
   });
-  restoreSession().catch((error) => {
-    showToast(`登录状态恢复失败：${error.message}`);
-  });
+  
+  if (state.isSharedMode) {
+    await loadSharedLogs();
+    renderCurrentMap();
+  } else {
+    restoreSession().catch((error) => {
+      showToast(`登录状态恢复失败：${error.message}`);
+    });
+  }
 
   window.addEventListener("resize", () => state.chart.resize());
 }
@@ -220,6 +238,9 @@ function setupStaticUi() {
 
   els.loginButton.addEventListener("click", openLoginDialog);
   els.logoutButton.addEventListener("click", logout);
+  if(els.shareButton) els.shareButton.addEventListener("click", openShareDialog);
+  if(els.shareForm) els.shareForm.addEventListener("submit", generateShareLink);
+  if(els.copyShareButton) els.copyShareButton.addEventListener("click", copyShareLink);
   els.backButton.addEventListener("click", () => {
     if (state.currentView.level === "province") {
       loadCountryMap(state.currentView.country);
@@ -264,10 +285,22 @@ function setupStaticUi() {
       els.footprintDialog.close();
     });
   });
+  document.querySelectorAll("[data-close-share]").forEach((button) => {
+    button.addEventListener("click", () => els.shareDialog.close());
+  });
   els.brandButton.addEventListener("click", handleHiddenAdminTap);
   state.chart.on("click", handleMapClick);
 
-  if (location.pathname.endsWith("/admin") || location.hash === "#admin") {
+  const urlParams = new URLSearchParams(window.location.search);
+  const shareToken = urlParams.get('share');
+  
+  if (shareToken) {
+    state.isSharedMode = true;
+    state.shareToken = shareToken;
+    els.authStatus.textContent = "访客模式 (只读)";
+    els.authStatus.hidden = false;
+  } else if (location.pathname.endsWith("/admin") || location.hash === "#admin") {
+    els.loginButton.hidden = false;
     setTimeout(openLoginDialog, 200);
   }
 }
@@ -375,15 +408,19 @@ async function restoreSession() {
 }
 
 function updateAuthUi() {
+  if (state.isSharedMode) return;
   const isAuthed = Boolean(state.session);
   els.authStatus.textContent = isAuthed ? "已登录" : "未登录";
-  els.loginButton.hidden = isAuthed;
+  els.authStatus.hidden = !isAuthed && !location.pathname.endsWith("/admin") && location.hash !== "#admin";
+  els.loginButton.hidden = isAuthed || (els.authStatus.hidden);
   els.logoutButton.hidden = !isAuthed;
   els.ledgerButton.hidden = !isAuthed;
+  if (els.shareButton) els.shareButton.hidden = !isAuthed;
   renderLocationPanel();
 }
 
 function handleHiddenAdminTap() {
+  if (state.isSharedMode) return;
   state.hiddenTapCount += 1;
   window.clearTimeout(state.hiddenTapTimer);
   state.hiddenTapTimer = window.setTimeout(() => {
@@ -391,6 +428,7 @@ function handleHiddenAdminTap() {
   }, 1200);
   if (state.hiddenTapCount >= 5) {
     state.hiddenTapCount = 0;
+    els.loginButton.hidden = false;
     openLoginDialog();
   }
 }
@@ -431,6 +469,27 @@ async function logout() {
 /* ═══════════════════════════════════════════════════════════
  *  5. 数据加载 (Data Layer)
  * ═══════════════════════════════════════════════════════════ */
+async function loadSharedLogs() {
+  setLoading(true, "正在加载分享数据...");
+  const { data, error } = await withTimeout(
+    state.supabase.rpc('get_shared_footprints', { share_token: state.shareToken }),
+    REQUEST_TIMEOUT_MS,
+    "读取分享数据超时"
+  );
+
+  if (error) {
+    setLoading(false);
+    showToast("分享链接无效或已过期");
+    state.logs = [];
+    return;
+  }
+
+  state.logs = data || [];
+  setLoading(false);
+  renderLedger();
+  renderLocationPanel();
+}
+
 async function loadLogs() {
   if (!state.session) {
     state.logs = [];
@@ -1037,7 +1096,7 @@ function filterByYear(logs) {
 }
 
 function getVisibleLogs() {
-  if (!state.session) return [];
+  if (!state.session && !state.isSharedMode) return [];
   return filterByYear(
     state.logs.filter((log) => state.activeCompanionFilters.has(log.companion_type))
   );
@@ -1214,7 +1273,7 @@ function renderLocationPanel() {
   els.locationPanel.hidden = false;
   const locationLogs = getLogsForLocation(location);
   const headerMeta = location.type === "city" ? location.province : "省级行政区";
-  const canCreate = Boolean(state.session);
+  const canCreate = Boolean(state.session) && !state.isSharedMode;
 
   els.locationPanel.innerHTML = `
     <div class="location-header">
@@ -1222,7 +1281,7 @@ function renderLocationPanel() {
         <p class="eyebrow">${escapeHtml(headerMeta)}</p>
         <h2>${escapeHtml(location.label)}</h2>
       </div>
-      <div class="location-actions">
+      <div class="location-actions" ${state.isSharedMode ? 'hidden' : ''}>
         <button class="tool-button primary" type="button" data-location-action="create" ${
           canCreate ? "" : "disabled"
         }>新建足迹</button>
@@ -1235,7 +1294,7 @@ function renderLocationPanel() {
 }
 
 function renderLocationHistory(logs) {
-  if (!state.session) return `<p class="empty-state">登录后可以查看和管理这个地点的足迹。</p>`;
+  if (!state.session && !state.isSharedMode) return `<p class="empty-state">登录后可以查看和管理这个地点的足迹。</p>`;
   if (!logs.length) return `<p class="empty-state">这个地点还没有足迹记录。</p>`;
 
   return logs
@@ -1247,10 +1306,12 @@ function renderLocationHistory(logs) {
             <strong>${escapeHtml(log.companion_type)}</strong>
             <small>${escapeHtml(getLogLocationLabel(log))}</small>
           </div>
+          ${!state.isSharedMode ? `
           <div class="history-actions">
             <button class="tool-button" type="button" data-location-action="edit" data-edit-id="${escapeHtml(log.id)}">修改</button>
             <button class="delete-button" type="button" data-location-action="delete" data-delete-id="${escapeHtml(log.id)}">删除</button>
           </div>
+          ` : ''}
         </article>
       `,
     )
@@ -1302,7 +1363,7 @@ function compareLogDate(a, b) {
 function formatTooltip(regionName) {
   const matchedLogs = getLogsForRegion(regionName, { ignoreTagFilter: true });
   const title = `<strong>${regionName}</strong>`;
-  if (!state.session) return `${title}<br/>登录后可查看足迹`;
+  if (!state.session && !state.isSharedMode) return `${title}<br/>登录后可查看足迹`;
   if (state.mapMode === "plain") return `${title}<br/>普通地图模式未显示足迹`;
   if (!matchedLogs.length) return `${title}<br/>暂无足迹`;
 
@@ -1400,6 +1461,7 @@ function handleMapClick(params) {
     if (state.fillLevel === "city" && state.currentView.mapName === "china") {
       const province = state.cityProvinceByName.get(params.name);
       if (!province) return;
+      if (state.isSharedMode) return;
       if (!state.session) {
         showToast("请先以管理员身份登录");
         return;
@@ -1464,6 +1526,7 @@ function handleMapClick(params) {
     return;
   }
 
+  if (state.isSharedMode) return;
   if (!state.session) {
     showToast("请先以管理员身份登录");
     return;
@@ -1563,6 +1626,69 @@ async function saveFootprint(event) {
 
 
 /* ═══════════════════════════════════════════════════════════
+ * 9.5 分享功能 (Sharing)
+ * ═══════════════════════════════════════════════════════════ */
+function openShareDialog() {
+  els.shareMessage.textContent = "";
+  els.shareResultArea.hidden = true;
+  els.shareExpireInput.value = "7";
+  els.shareLabelInput.value = "";
+  els.generateShareButton.hidden = false;
+  els.shareDialog.showModal();
+}
+
+async function generateShareLink(event) {
+  event.preventDefault();
+  if (!state.session) return;
+
+  els.shareMessage.textContent = "正在生成...";
+  els.generateShareButton.disabled = true;
+
+  const expireDays = parseInt(els.shareExpireInput.value, 10);
+  let expiresAt = null;
+  if (expireDays > 0) {
+    const d = new Date();
+    d.setDate(d.getDate() + expireDays);
+    expiresAt = d.toISOString();
+  }
+
+  // 生成 32 位随机 token
+  const array = new Uint8Array(16);
+  window.crypto.getRandomValues(array);
+  const token = Array.from(array, byte => byte.toString(16).padStart(2, '0')).join('');
+
+  const { error } = await state.supabase.from('share_tokens').insert({
+    token: token,
+    label: els.shareLabelInput.value.trim() || null,
+    expires_at: expiresAt
+  });
+
+  els.generateShareButton.disabled = false;
+
+  if (error) {
+    els.shareMessage.textContent = `生成失败：${error.message}`;
+    return;
+  }
+
+  els.shareMessage.textContent = "生成成功！";
+  
+  // 构建分享链接
+  const shareUrl = new URL(window.location.href);
+  shareUrl.searchParams.set('share', token);
+  shareUrl.hash = ''; // 清除 hash
+  
+  els.shareLinkInput.value = shareUrl.toString();
+  els.shareResultArea.hidden = false;
+  els.generateShareButton.hidden = true;
+}
+
+function copyShareLink() {
+  els.shareLinkInput.select();
+  document.execCommand("copy");
+  showToast("链接已复制到剪贴板");
+}
+
+/* ═══════════════════════════════════════════════════════════
  * 10. 足迹簿抽屉 (Ledger Drawer)
  * ═══════════════════════════════════════════════════════════ */
 function openLedger() {
@@ -1579,7 +1705,7 @@ function closeLedger() {
 }
 
 function renderLedger() {
-  if (!state.session) {
+  if (!state.session && !state.isSharedMode) {
     els.ledgerList.innerHTML = `<p class="empty-state">登录后可以查看足迹簿。</p>`;
     return;
   }
@@ -1610,10 +1736,12 @@ function renderLedger() {
                 ${month} ｜ ${escapeHtml(log.companion_type)}
               </small>
             </div>
+            ${!state.isSharedMode ? `
             <div class="history-actions">
               <button class="tool-button" type="button" data-edit-id="${log.id}">修改</button>
               <button class="delete-button" type="button" data-delete-id="${log.id}">删除</button>
             </div>
+            ` : ''}
           </header>
           ${
             log.remark
