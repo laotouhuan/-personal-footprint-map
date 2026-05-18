@@ -101,6 +101,7 @@ const state = {
   offscreenChart: null,
   isSharedMode: false,
   shareToken: null,
+  worldScatterData: [],  // 保存地球散点数据，供触摸事件使用
 };
 
 const provinceCapitals = new Set([
@@ -225,6 +226,15 @@ async function init() {
 
   window.addEventListener("resize", () => state.chart.resize());
 }
+
+/**
+ * 检测当前设备是否为触屏设备。
+ * 触屏设备使用 2D 世界地图（可靠 click），桌面端使用 3D 地球。
+ */
+function isTouchDevice() {
+  return ("ontouchstart" in window) || (navigator.maxTouchPoints > 0);
+}
+
 
 function setupStaticUi() {
   companionTags.forEach((tag) => {
@@ -773,10 +783,49 @@ async function renderCurrentMap() {
   const isWorld = state.currentView.level === "world";
 
   if (isWorld) {
+    // ── 触屏设备：渲染 2D 平面世界地图，原生支持 touch click ──
+    if (isTouchDevice()) {
+      state.chart.setOption({
+        backgroundColor: "#0d1b2a",
+        tooltip: {
+          show: true,
+          trigger: "item",
+          borderWidth: 0,
+          backgroundColor: "rgba(31, 41, 51, 0.9)",
+          textStyle: { color: "#fff" },
+          formatter: (params) => formatTooltip(params.name),
+        },
+        globe: undefined,
+        series: [{
+          type: "map",
+          map: "world",
+          roam: true,
+          scaleLimit: { min: 0.8, max: 20 },
+          selectedMode: false,
+          animationDurationUpdate: 0,
+          label: { show: false },
+          emphasis: {
+            label: { show: true, color: "#fff", fontWeight: 700 },
+            itemStyle: { areaColor: "#f2c66d" },
+          },
+          itemStyle: {
+            areaColor: "#1a3a5c",
+            borderColor: "#2b5a8a",
+            borderWidth: 0.5,
+          },
+          data: seriesData,
+        }],
+      }, true);
+      setLoading(false);
+      return;
+    }
+
+    // ── 桌面端：保持原有 3D 地球体验 ──
     const offChart = updateOffscreenWorldMap(seriesData);
     if (offChart) {
       await new Promise(resolve => setTimeout(resolve, 50));
     }
+
     
     const scatterData = [];
     const worldGeo = echarts.getMap("world");
@@ -810,6 +859,9 @@ async function renderCurrentMap() {
         }
       });
     }
+
+    // 保存散点数据供移动端触摸点击使用
+    state.worldScatterData = scatterData;
 
     setTimeout(() => {
       state.chart.setOption({
@@ -1443,62 +1495,66 @@ function handleMapClick(params) {
     const isoCode = params.data && params.data.isoCode ? params.data.isoCode : "";
     const targetCenter = params.data && params.data.value ? params.data.value : null;
 
-    if (targetCenter) {
-      const mapEl = els.map;
-      const w = mapEl.offsetWidth;
-      const h = mapEl.offsetHeight;
-
-      // 获取点击位置（scatter3D 的事件对象）
-      const evt = params.event && params.event.event ? params.event.event : params.event;
-      let clickX = w / 2, clickY = h / 2;
-      if (evt && evt.offsetX != null) {
-        clickX = evt.offsetX;
-        clickY = evt.offsetY;
-      }
-
-      // 计算平移量：将点击点移到画布中央（模拟"旋转居中"）
-      const dx = (w / 2 - clickX) / 6;  // 除以缩放倍数做归一化
-      const dy = (h / 2 - clickY) / 6;
-
-      // 设置 CSS 变量驱动 @keyframes drill-dive
-      mapEl.style.setProperty('--tx', `${dx}px`);
-      mapEl.style.setProperty('--ty', `${dy}px`);
-      mapEl.style.transformOrigin = `${clickX}px ${clickY}px`;
-
-      // === 阶段一：触发俯冲动画 (2s) ===
-      mapEl.classList.add('drill-animating');
-
-      // === 阶段二：俯冲到 40% 时，云层从上下涌入 ===
-      setTimeout(() => {
-        els.loadingMask.classList.add("drill-transition");
-        setLoading(true, "");
-      }, 800);
-
-      // === 阶段三：动画结束后，在云层下切换到 2D 地图，然后云层打开 ===
-      setTimeout(async () => {
-        // 移除俯冲动画（此时被云层完全遮盖）
-        mapEl.classList.remove('drill-animating');
-        mapEl.style.removeProperty('--tx');
-        mapEl.style.removeProperty('--ty');
-        mapEl.style.transformOrigin = '';
-
-        // 加载 2D 地图
-        await loadCountryMap(params.name, isoCode);
-
-        // 2D 地图就绪 → 云层打开，揭开地图
-        els.loadingMask.classList.remove("drill-transition");
-        els.loadingMask.classList.add("drill-fade-out");
-        setLoading(true, ""); // 保持 mask 可见，让云层动画播放
-        setTimeout(() => {
-          els.loadingMask.classList.remove("drill-fade-out");
-          setLoading(false);
-        }, 950);
-      }, 2100);
-    } else {
+    // 触屏设备使用 2D 世界地图，直接下钻，无 3D 动画
+    if (isTouchDevice() || !targetCenter) {
       loadCountryMap(params.name, isoCode);
+      return;
     }
+
+    // ── 以下为桌面端 3D 地球俯冲动画逻辑 ──
+    const mapEl = els.map;
+    const w = mapEl.offsetWidth;
+    const h = mapEl.offsetHeight;
+
+    // 获取点击位置（scatter3D 的事件对象）
+    const evt = params.event && params.event.event ? params.event.event : params.event;
+    let clickX = w / 2, clickY = h / 2;
+    if (evt && evt.offsetX != null) {
+      clickX = evt.offsetX;
+      clickY = evt.offsetY;
+    }
+
+    // 计算平移量：将点击点移到画布中央（模拟"旋转居中"）
+    const dx = (w / 2 - clickX) / 6;  // 除以缩放倍数做归一化
+    const dy = (h / 2 - clickY) / 6;
+
+    // 设置 CSS 变量驱动 @keyframes drill-dive
+    mapEl.style.setProperty('--tx', `${dx}px`);
+    mapEl.style.setProperty('--ty', `${dy}px`);
+    mapEl.style.transformOrigin = `${clickX}px ${clickY}px`;
+
+    // === 阶段一：触发俯冲动画 (2s) ===
+    mapEl.classList.add('drill-animating');
+
+    // === 阶段二：俯冲到 40% 时，云层从上下涌入 ===
+    setTimeout(() => {
+      els.loadingMask.classList.add("drill-transition");
+      setLoading(true, "");
+    }, 800);
+
+    // === 阶段三：动画结束后，在云层下切换到 2D 地图，然后云层打开 ===
+    setTimeout(async () => {
+      // 移除俯冲动画（此时被云层完全遮盖）
+      mapEl.classList.remove('drill-animating');
+      mapEl.style.removeProperty('--tx');
+      mapEl.style.removeProperty('--ty');
+      mapEl.style.transformOrigin = '';
+
+      // 加载 2D 地图
+      await loadCountryMap(params.name, isoCode);
+
+      // 2D 地图就绪 → 云层打开，揭开地图
+      els.loadingMask.classList.remove("drill-transition");
+      els.loadingMask.classList.add("drill-fade-out");
+      setLoading(true, ""); // 保持 mask 可见，让云层动画播放
+      setTimeout(() => {
+        els.loadingMask.classList.remove("drill-fade-out");
+        setLoading(false);
+      }, 950);
+    }, 2100);
     return;
   }
+
 
   if (state.currentView.level === "country") {
     // 仅中国地图支持省份下钻，其他国家由于暂无二级地图，点击不触发下钻及动画
