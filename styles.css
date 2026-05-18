@@ -62,7 +62,7 @@ button:disabled {
   backdrop-filter: blur(16px);
   position: sticky;
   top: 0;
-  z-index: 10;
+  z-index: 100;
 }
 
 .brand {
@@ -922,3 +922,48 @@ textarea {
     min-height: 480px;
   }
 }
+
+/* 分享弹窗中的标签筛选样式 */
+.share-tags-section {
+  margin: 14px 0;
+  display: grid;
+  gap: 8px;
+}
+
+.share-tags-section label {
+  margin: 0 !important;
+}
+
+.share-tags-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  background: white;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+.share-tag-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  color: var(--ink);
+  user-select: none;
+}
+
+.share-tag-item input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.share-tag-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+

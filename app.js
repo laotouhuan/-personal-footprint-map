@@ -139,6 +139,7 @@ const els = {
   shareForm: document.querySelector("#shareForm"),
   shareExpireInput: document.querySelector("#shareExpireInput"),
   shareLabelInput: document.querySelector("#shareLabelInput"),
+  shareTagsContainer: document.querySelector("#shareTagsContainer"),
   shareMessage: document.querySelector("#shareMessage"),
   shareResultArea: document.querySelector("#shareResultArea"),
   shareLinkInput: document.querySelector("#shareLinkInput"),
@@ -305,7 +306,14 @@ function setupStaticUi() {
 }
 
 function renderLegend() {
-  const allSelected = state.activeCompanionFilters.size === companionTags.length;
+  // 在分享模式下，动态过滤得到仅属于当前分享的数据的可见标签列表
+  let visibleTags = companionTags;
+  if (state.isSharedMode) {
+    const existingTags = new Set(state.logs.map(log => log.companion_type));
+    visibleTags = companionTags.filter(tag => existingTags.has(tag.label));
+  }
+
+  const allSelected = visibleTags.length > 0 && visibleTags.every((tag) => state.activeCompanionFilters.has(tag.label));
   
   const selectAllHtml = `
     <label class="legend-item">
@@ -315,7 +323,7 @@ function renderLegend() {
     <div class="legend-divider"></div>
   `;
 
-  const tagsHtml = companionTags
+  const tagsHtml = visibleTags
     .map(
       (tag) => `
         <label class="legend-item">
@@ -336,9 +344,16 @@ function handleLegendFilterChange(event) {
   const checkbox = event.target.closest("input[type='checkbox']");
   if (!checkbox) return;
 
+  // 在分享模式下，全选操作仅针对当前分享可见的标签
+  let targetTags = companionTags;
+  if (state.isSharedMode) {
+    const existingTags = new Set(state.logs.map(log => log.companion_type));
+    targetTags = companionTags.filter(tag => existingTags.has(tag.label));
+  }
+
   if (checkbox.value === "SELECT_ALL") {
     if (checkbox.checked) {
-      state.activeCompanionFilters = new Set(companionTags.map((tag) => tag.label));
+      state.activeCompanionFilters = new Set(targetTags.map((tag) => tag.label));
     } else {
       state.activeCompanionFilters.clear();
     }
@@ -484,6 +499,16 @@ async function loadSharedLogs() {
   }
 
   state.logs = data || [];
+
+  // 在分享模式下，根据返回的数据动态过滤可见的筛选标签，并默认全选这些可见标签，然后刷新图例渲染
+  if (state.isSharedMode) {
+    const existingTags = new Set(state.logs.map(log => log.companion_type));
+    state.activeCompanionFilters = new Set(
+      companionTags.map(tag => tag.label).filter(label => existingTags.has(label))
+    );
+    renderLegend();
+  }
+
   setLoading(false);
   renderLedger();
   renderLocationPanel();
@@ -1651,10 +1676,27 @@ async function saveFootprint(event) {
  * ═══════════════════════════════════════════════════════════ */
 function openShareDialog() {
   els.shareMessage.textContent = "";
+  els.shareMessage.style.color = "var(--muted)";
   els.shareResultArea.hidden = true;
   els.shareExpireInput.value = "7";
   els.shareLabelInput.value = "";
   els.generateShareButton.hidden = false;
+
+  // 动态渲染供分享的标签选择框，默认全选
+  if (els.shareTagsContainer) {
+    els.shareTagsContainer.innerHTML = companionTags
+      .map(
+        (tag) => `
+          <label class="share-tag-item">
+            <input type="checkbox" value="${escapeHtml(tag.label)}" checked />
+            <span class="share-tag-dot" style="background:${tag.color}"></span>
+            ${escapeHtml(tag.label)}
+          </label>
+        `
+      )
+      .join("");
+  }
+
   els.shareDialog.showModal();
 }
 
@@ -1662,6 +1704,18 @@ async function generateShareLink(event) {
   event.preventDefault();
   if (!state.session) return;
 
+  // 获取选择的分享标签
+  const checkedBoxes = els.shareTagsContainer ? els.shareTagsContainer.querySelectorAll("input[type='checkbox']:checked") : [];
+  const allowedCompanions = Array.from(checkedBoxes).map(cb => cb.value);
+
+  // 零勾选拦截逻辑
+  if (allowedCompanions.length === 0) {
+    els.shareMessage.style.color = "var(--danger)";
+    els.shareMessage.textContent = "错误：请至少选择一个允许分享的标签！";
+    return;
+  }
+
+  els.shareMessage.style.color = "var(--muted)";
   els.shareMessage.textContent = "正在生成...";
   els.generateShareButton.disabled = true;
 
@@ -1681,16 +1735,19 @@ async function generateShareLink(event) {
   const { error } = await state.supabase.from('share_tokens').insert({
     token: token,
     label: els.shareLabelInput.value.trim() || null,
-    expires_at: expiresAt
+    expires_at: expiresAt,
+    allowed_companions: allowedCompanions
   });
 
   els.generateShareButton.disabled = false;
 
   if (error) {
+    els.shareMessage.style.color = "var(--danger)";
     els.shareMessage.textContent = `生成失败：${error.message}`;
     return;
   }
 
+  els.shareMessage.style.color = "var(--accent)";
   els.shareMessage.textContent = "生成成功！";
   
   // 构建分享链接
