@@ -868,43 +868,103 @@ textarea {
   transform: translateX(-50%) translateY(0);
 }
 
-@media (max-width: 760px) {
+@media (max-width: 768px) {
   .topbar {
     height: auto;
     align-items: flex-start;
     flex-direction: column;
-    padding: 14px 16px;
+    padding: 12px 16px;
     gap: 12px;
   }
 
   .toolbar {
     justify-content: flex-start;
+    gap: 8px;
+  }
+
+  /* 增大触控目标尺寸 */
+  .tool-button,
+  .icon-button,
+  .segmented button,
+  input,
+  select,
+  textarea {
+    min-height: 42px;
   }
 
   .map-stage {
-    padding: 18px 14px 22px;
+    padding: 0;
   }
 
-  .map-header {
-    align-items: flex-start;
-    flex-direction: column;
+  .floating-panel {
+    padding: 14px 16px;
   }
 
-  .map-tools {
-    justify-items: start;
+  /* 顶部标题与搜索面板适应屏幕宽度，并使其背景透明允许点击穿透 */
+  .floating-header {
+    top: 16px;
+    left: 16px;
+    right: 16px;
+    width: auto;
+    max-height: 55vh;
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    padding: 0;
+    pointer-events: none;
+  }
+
+  .floating-header h1,
+  .floating-header button,
+  .floating-header input,
+  .floating-header .search-results,
+  .floating-header .location-panel,
+  .input-group {
+    pointer-events: auto;
+  }
+
+  /* 增加标题的可读性 */
+  .floating-header h1 {
+    font-size: 26px;
+    text-shadow: 0 1px 6px rgba(255,255,255,0.9), 0 0 12px rgba(255,255,255,1);
+  }
+
+  /* 将右侧工具栏移动到屏幕底部，并取消父容器背景使控件像胶囊一样悬浮 */
+  .floating-tools {
+    top: auto;
+    bottom: 24px;
+    left: 16px;
+    right: 16px;
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    padding: 0;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+  
+  .floating-tools .segmented {
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+    background: rgba(255, 255, 255, 0.9);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border-radius: 12px;
     width: 100%;
-  }
-
-  .segmented,
-  .legend {
-    width: 100%;
+    flex: 1;
   }
 
   .segmented button {
     flex: 1;
+    padding: 10px 4px;
+    font-size: 14px;
   }
 
-  .search-row,
   .history-row {
     grid-template-columns: 1fr;
   }
@@ -913,13 +973,16 @@ textarea {
     flex-direction: column;
   }
 
-  h1 {
-    font-size: 28px;
+  .year-overlay {
+    bottom: 90px;
+    right: 20px;
+    font-size: 44px;
   }
 
   .map-card,
   #map {
-    min-height: 480px;
+    height: 100%;
+    min-height: auto;
   }
 }
 

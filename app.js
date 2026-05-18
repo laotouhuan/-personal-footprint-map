@@ -798,8 +798,8 @@ async function renderCurrentMap() {
           let center = manualCenters[name] || f.properties.cp || metrics.center;
           const baseSize = Math.sqrt(metrics.lonSpan * Math.abs(metrics.latSpan));
           
-          // 动态缩放热区：最小 25，上限调高至 400，放大系数从 2.5 提升到 3.5，让大国热区更广
-          const symbolSize = Math.max(25, Math.min(400, baseSize * 3.5));
+          // 动态缩放热区：为移动端提高下限至 50，放大系数提升到 4.5，让点击更容易
+          const symbolSize = Math.max(50, Math.min(500, baseSize * 4.5));
 
           scatterData.push({
             name: name,
@@ -856,11 +856,11 @@ async function renderCurrentMap() {
           },
           itemStyle: {
             color: '#ffffff',
-            opacity: 0.001 // 完全隐形，防止视觉污染
+            opacity: 0.01 // 极低透明度，防止视觉污染同时确保触控事件触发
           },
           emphasis: {
             itemStyle: {
-              opacity: 0.001
+              opacity: 0.01
             }
           },
           data: scatterData
