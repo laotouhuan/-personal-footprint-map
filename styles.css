@@ -1101,3 +1101,27 @@ textarea {
   border-radius: 50%;
 }
 
+/* ═══════════════════════════════════════════════════════════
+ * 音乐控制样式
+ * ═══════════════════════════════════════════════════════════ */
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.music-button {
+  transition: opacity 0.3s ease;
+  font-size: 16px;
+  width: 36px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: transparent !important;
+  border: 1px solid transparent !important;
+}
+
+.music-button.playing {
+  animation: spin 3s linear infinite;
+}

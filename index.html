@@ -17,11 +17,13 @@
         </button>
 
         <div class="toolbar">
+          <button class="icon-button music-button" id="musicButton" type="button" title="音乐开关">🎵</button>
           <div class="legend" id="legend">
             <button class="tool-button" id="filterToggleButton" type="button">筛选标签</button>
             <div class="filter-dropdown" id="filterDropdown" hidden></div>
           </div>
           <button class="tool-button" id="shareButton" type="button" hidden>分享</button>
+          <button class="tool-button" id="posterButton" type="button">海报</button>
           <button class="tool-button" id="statsButton" type="button">统计</button>
           <button class="tool-button" id="ledgerButton" type="button" hidden>足迹簿</button>
           <span class="status-pill" id="authStatus" hidden>访客模式 (只读)</span>
@@ -217,9 +219,30 @@
       </form>
     </dialog>
 
+    <dialog class="modal" id="posterDialog">
+      <form method="dialog" class="modal-panel" id="posterForm" style="width: auto; max-width: 90vw;">
+        <div class="modal-header">
+          <div>
+            <p class="eyebrow">生成结果</p>
+            <h2>您的足迹海报</h2>
+          </div>
+          <button class="icon-button" value="cancel" type="button" data-close-poster aria-label="关闭">×</button>
+        </div>
+        <div style="text-align: center; margin: 16px 0;">
+          <img id="posterPreviewImage" src="" alt="海报预览" style="max-height: 60vh; max-width: 100%; border-radius: 8px; box-shadow: var(--shadow);" />
+        </div>
+        <div class="modal-actions" style="justify-content: center;">
+          <a id="posterDownloadLink" class="tool-button primary" href="#" download="footprint-poster.png" style="text-decoration: none; padding: 10px 32px; font-weight: 600;">保存到相册 / 下载</a>
+        </div>
+      </form>
+    </dialog>
+
     <div class="toast" id="toast" role="status"></div>
 
     <div id="offscreenMap" style="width: 4096px; height: 2048px; position: absolute; left: -9999px; top: -9999px;" aria-hidden="true"></div>
+
+    <audio id="bgMusic" src="./music.flac" loop preload="auto"></audio>
+
     <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/echarts-gl@2/dist/echarts-gl.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>

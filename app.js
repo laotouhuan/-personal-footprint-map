@@ -173,6 +173,12 @@ const els = {
   statsSummaryContainer: document.querySelector("#statsSummaryContainer"),
   timelineChartEl: document.querySelector("#timelineChart"),
   companionChartEl: document.querySelector("#companionChart"),
+  posterButton: document.querySelector("#posterButton"),
+  posterDialog: document.querySelector("#posterDialog"),
+  posterPreviewImage: document.querySelector("#posterPreviewImage"),
+  posterDownloadLink: document.querySelector("#posterDownloadLink"),
+  bgMusic: document.querySelector("#bgMusic"),
+  musicButton: document.querySelector("#musicButton"),
 };
 
 const countryCodeMap = {
@@ -232,6 +238,38 @@ async function init() {
   }
 
   window.addEventListener("resize", () => state.chart.resize());
+  
+  // 尝试初始化并播放背景音乐
+  initMusic();
+}
+
+/**
+ * 初始化背景音乐，处理浏览器的 Autoplay 策略
+ */
+function initMusic() {
+  if (!els.bgMusic || !els.musicButton) return;
+  
+  els.bgMusic.volume = 0.5; // 设置适中音量
+  
+  // 尝试自动播放
+  els.bgMusic.play().then(() => {
+    els.musicButton.classList.add("playing");
+    state.isMusicPlaying = true;
+  }).catch(() => {
+    // 浏览器阻止了没有任何用户交互的自动播放
+    state.isMusicPlaying = false;
+    // 监听用户的第一次点击以启动音乐
+    const playOnInteraction = () => {
+      if (!state.isMusicPlaying) {
+        els.bgMusic.play().then(() => {
+          els.musicButton.classList.add("playing");
+          state.isMusicPlaying = true;
+        }).catch(e => console.error("音频播放失败", e));
+      }
+      document.body.removeEventListener("click", playOnInteraction);
+    };
+    document.body.addEventListener("click", playOnInteraction, { once: true });
+  });
 }
 
 /**
@@ -274,9 +312,31 @@ function setupStaticUi() {
   els.loginForm.addEventListener("submit", login);
   els.footprintForm.addEventListener("submit", saveFootprint);
   
+  if (els.musicButton) {
+    els.musicButton.addEventListener("click", (e) => {
+      e.stopPropagation(); // 阻止冒泡，避免触发 body 的 interaction 事件
+      if (state.isMusicPlaying) {
+        els.bgMusic.pause();
+        els.musicButton.classList.remove("playing");
+        state.isMusicPlaying = false;
+      } else {
+        els.bgMusic.play();
+        els.musicButton.classList.add("playing");
+        state.isMusicPlaying = true;
+      }
+    });
+  }
+  
   els.statsButton.addEventListener("click", openStatsDrawer);
   els.totalStatsBadge.addEventListener("click", openStatsDrawer);
   els.closeStatsButton.addEventListener("click", closeStatsDrawer);
+  
+  if (els.posterButton) els.posterButton.addEventListener("click", generatePoster);
+  document.querySelectorAll("[data-close-poster]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      if (els.posterDialog) els.posterDialog.close();
+    });
+  });
   
   els.filterToggleButton.addEventListener("click", () => {
     els.filterDropdown.hidden = !els.filterDropdown.hidden;
@@ -923,11 +983,11 @@ async function renderCurrentMap() {
           },
           itemStyle: {
             color: '#ffffff',
-            opacity: 0.01 // 极低透明度，防止视觉污染同时确保触控事件触发
+            opacity: 0 // 完全透明，保留触控事件
           },
           emphasis: {
             itemStyle: {
-              opacity: 0.01
+              opacity: 0
             }
           },
           data: scatterData
@@ -1841,6 +1901,15 @@ function copyShareLink() {
  * 10. 足迹簿抽屉 (Ledger Drawer)
  * ═══════════════════════════════════════════════════════════ */
 function openLedger() {
+  if (els.ledgerDrawer.classList.contains("open")) {
+    closeLedger();
+    return;
+  }
+  if (els.statsDrawer && els.statsDrawer.classList.contains("open")) {
+    els.statsDrawer.classList.remove("open");
+    els.statsDrawer.setAttribute("aria-hidden", "true");
+  }
+
   renderLedger();
   els.ledgerDrawer.classList.add("open");
   els.ledgerDrawer.setAttribute("aria-hidden", "false");
@@ -1850,7 +1919,9 @@ function openLedger() {
 function closeLedger() {
   els.ledgerDrawer.classList.remove("open");
   els.ledgerDrawer.setAttribute("aria-hidden", "true");
-  els.drawerScrim.hidden = true;
+  if (!els.statsDrawer || !els.statsDrawer.classList.contains("open")) {
+    els.drawerScrim.hidden = true;
+  }
 }
 
 function renderLedger() {
@@ -2006,10 +2077,21 @@ function updateStatsBadge() {
 }
 
 function openStatsDrawer() {
+  if (els.statsDrawer.classList.contains("open")) {
+    closeStatsDrawer();
+    return;
+  }
+  
   if (!state.session && !state.isSharedMode) {
     showToast("请先登录或通过分享链接访问");
     return;
   }
+  
+  if (els.ledgerDrawer && els.ledgerDrawer.classList.contains("open")) {
+    els.ledgerDrawer.classList.remove("open");
+    els.ledgerDrawer.setAttribute("aria-hidden", "true");
+  }
+
   renderStats();
   els.statsDrawer.classList.add("open");
   els.statsDrawer.setAttribute("aria-hidden", "false");
@@ -2268,4 +2350,171 @@ function triggerYearChange() {
   renderCurrentMap();
   renderLedger();
   renderLocationPanel();
+}
+
+/* ═══════════════════════════════════════════════════════════
+ * 13. 海报生成 (Poster Generation)
+ * ═══════════════════════════════════════════════════════════ */
+async function generatePoster() {
+  if (state.currentView.level === "world") {
+    showToast("目前海报生成暂不支持世界地图噢");
+    return;
+  }
+
+  showToast("正在为您生成海报...");
+
+  try {
+    // 1. 临时将地图背景设为透明，以便截取出纯地图
+    state.chart.setOption({ backgroundColor: "transparent" });
+
+    const mapDataUrl = state.chart.getDataURL({
+      type: "png",
+      pixelRatio: 2,
+      backgroundColor: "transparent",
+    });
+
+    // 截图完成后，立刻恢复地图的白色背景
+    state.chart.setOption({ backgroundColor: "#ffffff" });
+
+    // 2. 获取地图原始尺寸
+    const mapImg = new Image();
+    mapImg.src = mapDataUrl;
+    await new Promise((resolve, reject) => {
+      mapImg.onload = resolve;
+      mapImg.onerror = reject;
+    });
+
+    const width = mapImg.width;
+    const height = mapImg.height;
+
+    // 创建离屏 Canvas，尺寸完全贴合地图
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d");
+    canvas.width = width;
+    canvas.height = height;
+
+    // 3. 绘制深色高级感背景
+    const grad = ctx.createLinearGradient(0, 0, width, height);
+    grad.addColorStop(0, "#080c13");
+    grad.addColorStop(1, "#172b43");
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, width, height);
+
+    // 移除突兀的中心光晕，保持纯净深邃的背景
+
+    // 4. 将透明地图画满全屏，添加极简的纯黑软阴影，营造悬浮感
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.4)'; // 纯黑投影，克制高级
+    ctx.shadowBlur = 30;
+    ctx.shadowOffsetX = 0;
+    ctx.shadowOffsetY = 15;
+    ctx.drawImage(mapImg, 0, 0, width, height);
+    
+    // 清除阴影以免影响后续文字
+    ctx.shadowColor = 'transparent';
+    ctx.shadowBlur = 0;
+
+    // 5. 绘制左上角标题 (改回白色文字)
+    ctx.fillStyle = "#ffffff";
+    ctx.textAlign = "left";
+    
+    // 主标题 (缩小字体，增加留白)
+    const titleSize = Math.max(40, Math.floor(width * 0.035));
+    ctx.font = `bold ${titleSize}px 'Microsoft YaHei', sans-serif`;
+    
+    let mainTitle = "我的全国足迹";
+    if (state.currentView.level === "province") {
+      mainTitle = `我的${state.currentView.province}足迹`;
+    } else if (state.currentView.country !== "中国") {
+      mainTitle = `我的${state.currentView.country}足迹`;
+    }
+    
+    ctx.fillText(mainTitle, width * 0.05, height * 0.12);
+    
+    // 副标题/副文本 (缩小并调暗，拉开视觉层次)
+    const subSize = Math.max(20, Math.floor(width * 0.015));
+    ctx.font = `normal ${subSize}px 'Microsoft YaHei', sans-serif`;
+    ctx.fillStyle = "rgba(255, 255, 255, 0.5)";
+    ctx.fillText("迎着阳光盛大逃亡", width * 0.05 + 5, height * 0.12 + titleSize * 1.5);
+
+    // 6. 计算当前足迹数据动态生成文案
+    const visibleLogs = getVisibleLogs();
+    let statsText = "";
+
+    if (state.currentView.level === "province") {
+      // 省级地图：只统计该省的城市
+      const cities = new Set(visibleLogs.map(l => l.city).filter(Boolean));
+      statsText = `点亮 ${cities.size} 城市`;
+    } else if (state.currentView.country !== "中国") {
+      // 外国地图：统计城市，如果没有城市信息则显示足迹数
+      const cities = new Set(visibleLogs.map(l => l.city).filter(Boolean));
+      if (cities.size > 0) {
+        statsText = `点亮 ${cities.size} 城市`;
+      } else {
+        statsText = visibleLogs.length > 0 ? `留下 ${visibleLogs.length} 个足迹` : `点亮 0 城市`;
+      }
+    } else {
+      // 中国全国地图
+      const provinces = new Set(visibleLogs.map(l => l.province).filter(Boolean));
+      const cities = new Set(visibleLogs.map(l => l.city).filter(Boolean));
+      statsText = `点亮 ${provinces.size} 省份 · ${cities.size} 城市`;
+    }
+
+    // 绘制左下角的极简胶囊徽章 (Pill 样式)
+    const statSize = Math.max(24, Math.floor(width * 0.02));
+    ctx.font = `normal ${statSize}px 'Microsoft YaHei', sans-serif`;
+    
+    const metrics = ctx.measureText(statsText);
+    const textWidth = metrics.width;
+    const boxPaddingX = statSize * 1.5;
+    const boxPaddingY = statSize * 0.8;
+    const boxWidth = textWidth + boxPaddingX * 2;
+    const boxHeight = statSize + boxPaddingY * 2;
+    const borderRadius = boxHeight / 2; // 胶囊全圆角
+    
+    const boxX = width * 0.05;
+    const boxY = height * 0.88 - boxHeight;
+
+    // 徽章背景：微弱的高级半透明白
+    ctx.fillStyle = "rgba(255, 255, 255, 0.1)";
+    ctx.beginPath();
+    ctx.roundRect(boxX, boxY, boxWidth, boxHeight, borderRadius);
+    ctx.fill();
+    
+    // 徽章边框：模拟极细亚克力边缘高光
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.2)";
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    
+    // 绘制统计文字 (纯白，克制的高级感)
+    ctx.fillStyle = "#ffffff";
+    ctx.textBaseline = "middle";
+    ctx.fillText(statsText, boxX + boxPaddingX, boxY + boxHeight / 2);
+
+    // 7. 绘制右下角水印/Logo (进一步缩小)
+    ctx.textBaseline = "alphabetic";
+    const watermarkSize = Math.max(14, Math.floor(width * 0.012));
+    ctx.font = `normal ${watermarkSize}px 'Microsoft YaHei', sans-serif`;
+    ctx.fillStyle = "rgba(255, 255, 255, 0.3)";
+
+    ctx.textAlign = "right";
+    const dateStr = new Date().toLocaleDateString("zh-CN", { year: 'numeric', month: 'long' });
+    ctx.fillText(`由「足迹地图」自动生成 @ ${dateStr}`, width * 0.95, height * 0.92);
+
+    // 8. 导出图像并展示在对话框中
+    const finalDataUrl = canvas.toDataURL("image/png");
+    if (els.posterPreviewImage) {
+      els.posterPreviewImage.src = finalDataUrl;
+    }
+    if (els.posterDownloadLink) {
+      els.posterDownloadLink.href = finalDataUrl;
+      const downloadName = `足迹地图海报-${new Date().getTime()}.png`;
+      els.posterDownloadLink.download = downloadName;
+    }
+
+    if (els.posterDialog) els.posterDialog.showModal();
+
+  } catch (error) {
+    console.error("生成海报失败:", error);
+    showToast("生成海报时发生错误，请稍后再试");
+  }
 }
