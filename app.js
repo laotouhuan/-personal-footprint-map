@@ -10,6 +10,13 @@ const LOCAL_CHINA_GEOJSON_BASE = "./maps/china";
 const CHINA_CITY_MAP_NAME = "china-cities";
 const REQUEST_TIMEOUT_MS = 8000;
 
+/** 地图渲染模式 */
+const MAP_MODE = { HIGHLIGHT: "highlight", PLAIN: "plain", HEATMAP: "heatmap" };
+/** 视图层级 */
+const VIEW_LEVEL = { WORLD: "world", COUNTRY: "country", PROVINCE: "province" };
+/** 填色层级 */
+const FILL_LEVEL = { PROVINCE: "province", CITY: "city" };
+
 const companionTags = [
   { label: "父母", color: "#FF6B6B" },
   { label: "同学", color: "#4ECDC4" },
@@ -637,8 +644,6 @@ async function loadLogs() {
 
 /* ═══════════════════════════════════════════════════════════
  *  6. 地图导航 (Map Navigation)
- *  TODO: v5 - loadCountryMap 增加 countryName 参数支持多国切换
- *  TODO: v5 - 新增 loadWorldMap() 加载世界地图 3D 地球视图
  * ═══════════════════════════════════════════════════════════ */
 async function loadWorldMap() {
   clearTimeout(state.roamTimeout);
@@ -737,7 +742,6 @@ async function loadAndRegisterMap(mapName, adcode, isoCode = "") {
 }
 
 
-// TODO: v5 - loadGeoJson 支持中国以外国家的路径格式
 async function loadGeoJson(adcode, isoCode = "") {
   if (state.geoJsonCache.has(adcode)) return state.geoJsonCache.get(adcode);
 
@@ -1067,6 +1071,9 @@ async function renderCurrentMap() {
       inRange: {
         color: ['#ccfbf1', '#14b8a6', '#0f766e'] // 浅薄荷 → 孔雀青 → 深绿
       },
+      outOfRange: {
+        color: ['#dfe8ea'] // 未到访的地区保持默认的淡灰蓝色背景
+      },
       textStyle: {
         color: '#43505c',
         fontSize: 12,
@@ -1078,8 +1085,9 @@ async function renderCurrentMap() {
   }
 
   const tooltipFormatter = (params) => {
-    if (state.mapMode === "heatmap" && typeof params.value === 'number') {
-      return `<strong>${params.name}</strong><br/>到访次数：${params.value} 次`;
+    if (state.mapMode === "heatmap") {
+      const val = typeof params.value === 'number' && !isNaN(params.value) ? params.value : 0;
+      return `<strong>${params.name}</strong><br/>到访次数：${val} 次`;
     }
     return formatTooltip(params.name);
   };
@@ -1274,7 +1282,13 @@ function buildMapSeriesData() {
   });
 
   if (state.mapMode === "heatmap") {
-    return Array.from(regionMap.entries()).map(([name, logList]) => {
+    let activeMapName = state.currentView.mapName;
+    if (state.currentView.level === "country" && state.fillLevel === "city" && state.currentView.mapName === "china") {
+      activeMapName = CHINA_CITY_MAP_NAME;
+    }
+    const currentMapRegions = state.mapRegions.get(activeMapName);
+
+    const seriesData = Array.from(regionMap.entries()).map(([name, logList]) => {
       const count = logList.length;
       return {
         name,
@@ -1285,6 +1299,25 @@ function buildMapSeriesData() {
         },
       };
     });
+
+    // 显式补全当前地图中所有未到访的地区为 0 次，配合 visualMap.outOfRange 实现不着色
+    if (currentMapRegions) {
+      const visitedNames = new Set(seriesData.map(d => d.name));
+      currentMapRegions.forEach((name) => {
+        if (!visitedNames.has(name) && name !== "南海诸岛") {
+          seriesData.push({
+            name,
+            value: 0,
+            itemStyle: {
+              borderColor: "#ffffff",
+              borderWidth: 1.4,
+            },
+          });
+        }
+      });
+    }
+
+    return seriesData;
   }
 
   // 足迹高亮模式：原有的返回逻辑
@@ -1882,7 +1915,7 @@ async function saveFootprint(event) {
 
 
 /* ═══════════════════════════════════════════════════════════
- * 9.5 分享功能 (Sharing)
+ * 10. 分享功能 (Sharing)
  * ═══════════════════════════════════════════════════════════ */
 function openShareDialog() {
   els.shareMessage.textContent = "";
@@ -1977,7 +2010,7 @@ function copyShareLink() {
 }
 
 /* ═══════════════════════════════════════════════════════════
- * 10. 足迹簿抽屉 (Ledger Drawer)
+ * 11. 足迹簿抽屉 (Ledger Drawer)
  * ═══════════════════════════════════════════════════════════ */
 function openLedger() {
   if (els.ledgerDrawer.classList.contains("open")) {
@@ -2096,7 +2129,7 @@ async function deleteFootprint(id) {
 
 
 /* ═══════════════════════════════════════════════════════════
- * 11.5 数据统计 (Statistics)
+ * 12. 数据统计 (Statistics)
  * ═══════════════════════════════════════════════════════════ */
 function updateStatsBadge() {
   if (!state.session && !state.isSharedMode) {
@@ -2274,7 +2307,7 @@ function renderStats() {
 }
 
 /* ═══════════════════════════════════════════════════════════
- * 12. 工具函数 (Utilities)
+ * 13. 工具函数 (Utilities)
  * ═══════════════════════════════════════════════════════════ */
 function getCompanionColor(label) {
   return companionColorByLabel[label] || "#7c8792";
@@ -2365,7 +2398,7 @@ function saveMapState() {
 
 
 /* ═══════════════════════════════════════════════════════════
- * 11. 时间轴与播放 (Playback)
+ * 14. 时间轴与播放 (Playback)
  * ═══════════════════════════════════════════════════════════ */
 function togglePlayback() {
   if (state.playbackInterval) {
@@ -2432,7 +2465,7 @@ function triggerYearChange() {
 }
 
 /* ═══════════════════════════════════════════════════════════
- * 13. 海报生成 (Poster Generation)
+ * 15. 海报生成 (Poster Generation)
  * ═══════════════════════════════════════════════════════════ */
 async function generatePoster() {
   if (state.currentView.level === "world") {

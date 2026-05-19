@@ -348,12 +348,6 @@ h1 {
   border-color: var(--accent) !important;
 }
 
-
-
-.search-group {
-  /* 移除之前的 margin-bottom */
-}
-
 .input-group:not(:last-child) {
   margin-bottom: 12px;
 }
