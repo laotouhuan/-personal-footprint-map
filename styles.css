@@ -984,6 +984,15 @@ textarea {
     height: 100%;
     min-height: auto;
   }
+
+  .floating-tools .segmented[aria-label="地图模式"] {
+    display: none;
+  }
+
+  .floating-header .search-group,
+  .floating-header .search-results {
+    display: none !important;
+  }
 }
 
 /* 分享弹窗中的标签筛选样式 */
