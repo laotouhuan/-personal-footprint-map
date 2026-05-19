@@ -98,6 +98,7 @@ const state = {
   currentCenter: null,
   lastShowCity: false,
   lastRenderedMapName: null,
+  lastMapMode: null,
   offscreenChart: null,
   isSharedMode: false,
   shareToken: null,
@@ -124,6 +125,7 @@ const els = {
   playButton: document.querySelector("#playButton"),
   yearOverlay: document.querySelector("#yearOverlay"),
   mapModeButtons: document.querySelectorAll("[data-map-mode]"),
+  heatmapModeButton: document.querySelector("#heatmapModeButton"),
   fillLevelControls: document.querySelector("#fillLevelControls"),
   fillLevelButtons: document.querySelectorAll("[data-fill-level]"),
   locationSearchInput: document.querySelector("#locationSearchInput"),
@@ -456,7 +458,7 @@ function handleLegendFilterChange(event) {
 }
 
 function setMapMode(mode) {
-  if (!["highlight", "plain"].includes(mode)) return;
+  if (!["highlight", "plain", "heatmap"].includes(mode)) return;
   state.mapMode = mode;
   syncMapControls();
   renderCurrentMap();
@@ -473,6 +475,17 @@ function syncMapControls() {
   els.mapModeButtons.forEach((button) => {
     button.setAttribute("aria-pressed", String(button.dataset.mapMode === state.mapMode));
   });
+
+  // 热力图仅在中国/省级地图下显示
+  if (els.heatmapModeButton) {
+    els.heatmapModeButton.hidden = state.currentView.country !== "中国";
+    // 如果在不被支持的视图下当前仍处于热力图模式，自动切回高亮模式
+    if (state.currentView.country !== "中国" && state.mapMode === "heatmap") {
+      state.mapMode = "highlight";
+      return syncMapControls(); // 重新触发状态同步
+    }
+  }
+
   els.fillLevelButtons.forEach((button) => {
     button.setAttribute("aria-pressed", String(button.dataset.fillLevel === state.fillLevel));
   });
@@ -1034,7 +1047,44 @@ async function renderCurrentMap() {
     data: seriesData,
   };
 
-  if (mapChanged) {
+  // 判断地图或模式是否变化，任一变化都需要 notMerge 以彻底重置所有组件（尤其是 visualMap）
+  const modeChanged = state.lastMapMode !== state.mapMode;
+  state.lastMapMode = state.mapMode;
+  const shouldNotMerge = mapChanged || modeChanged;
+
+  let visualMapConfig;
+  if (state.mapMode === "heatmap") {
+    const maxCount = Math.max(1, ...seriesData.map(d => d.value || 0));
+    visualMapConfig = {
+      type: 'continuous',
+      show: true,
+      min: 1,
+      max: maxCount,
+      left: 20,
+      bottom: 20,
+      text: ['高频', '低频'],
+      calculable: true,
+      inRange: {
+        color: ['#ccfbf1', '#14b8a6', '#0f766e'] // 浅薄荷 → 孔雀青 → 深绿
+      },
+      textStyle: {
+        color: '#43505c',
+        fontSize: 12,
+      }
+    };
+  } else {
+    // 非热力图模式：传空数组彻底清除 visualMap，防止污染 areaColor
+    visualMapConfig = [];
+  }
+
+  const tooltipFormatter = (params) => {
+    if (state.mapMode === "heatmap" && typeof params.value === 'number') {
+      return `<strong>${params.name}</strong><br/>到访次数：${params.value} 次`;
+    }
+    return formatTooltip(params.name);
+  };
+
+  if (shouldNotMerge) {
     state.chart.setOption(
       {
         backgroundColor: "#ffffff",
@@ -1043,11 +1093,12 @@ async function renderCurrentMap() {
           borderWidth: 0,
           backgroundColor: "rgba(31, 41, 51, 0.9)",
           textStyle: { color: "#fff" },
-          formatter: (params) => formatTooltip(params.name),
+          formatter: tooltipFormatter,
         },
+        visualMap: visualMapConfig,
         series: [seriesOption],
       },
-      true,
+      true, // notMerge — 彻底重置，避免旧 visualMap 残留
     );
   } else {
     state.chart.setOption({
@@ -1173,46 +1224,70 @@ async function buildChinaCityGeoJson() {
 
 function buildMapSeriesData() {
   const regionMap = new Map();
-  const logs = state.mapMode === "highlight" ? getVisibleLogs() : [];
+  // 热力图和足迹高亮都需要读取可见的 logs
+  const logs = state.mapMode === "plain" ? [] : getVisibleLogs();
   const targetYear = getTargetYear();
 
   logs.forEach((log) => {
     const key = getRegionKeyFromLog(log);
     if (!key) return;
     const current = regionMap.get(key) || [];
-    if (current.length === 0) {
-      regionMap.set(key, [log]);
+    
+    if (state.mapMode === "heatmap") {
+      // 热力图模式：收集该地区所有筛选后的日记用于统计次数
+      current.push(log);
+      regionMap.set(key, current);
     } else {
-      const currentLog = current[0];
-      const logDate = new Date(log.visit_date);
-      const currentDate = new Date(currentLog.visit_date);
-      const logYear = logDate.getFullYear();
-      const currentYear = currentDate.getFullYear();
-      const dateDiff = currentDate.getTime() - logDate.getTime();
-      
-      let shouldReplace = false;
-      if (targetYear) {
-        if (logYear > currentYear) {
-          shouldReplace = true;
-        } else if (logYear < currentYear) {
-          shouldReplace = false;
+      // 足迹高亮模式：原有的按照时间最近及多同行者合并逻辑
+      if (current.length === 0) {
+        regionMap.set(key, [log]);
+      } else {
+        const currentLog = current[0];
+        const logDate = new Date(log.visit_date);
+        const currentDate = new Date(currentLog.visit_date);
+        const logYear = logDate.getFullYear();
+        const currentYear = currentDate.getFullYear();
+        const dateDiff = currentDate.getTime() - logDate.getTime();
+        
+        let shouldReplace = false;
+        if (targetYear) {
+          if (logYear > currentYear) {
+            shouldReplace = true;
+          } else if (logYear < currentYear) {
+            shouldReplace = false;
+          } else {
+            shouldReplace = dateDiff > 0;
+          }
         } else {
           shouldReplace = dateDiff > 0;
         }
-      } else {
-        shouldReplace = dateDiff > 0;
-      }
 
-      if (shouldReplace) {
-        regionMap.set(key, [log]);
-      } else if (dateDiff === 0) {
-        if (!current.some(c => c.companion_type === log.companion_type)) {
-          current.push(log);
+        if (shouldReplace) {
+          regionMap.set(key, [log]);
+        } else if (dateDiff === 0) {
+          if (!current.some(c => c.companion_type === log.companion_type)) {
+            current.push(log);
+          }
         }
       }
     }
   });
 
+  if (state.mapMode === "heatmap") {
+    return Array.from(regionMap.entries()).map(([name, logList]) => {
+      const count = logList.length;
+      return {
+        name,
+        value: count, // visualMap 会根据这个 value 自动映射颜色
+        itemStyle: {
+          borderColor: "#ffffff",
+          borderWidth: 1.4,
+        },
+      };
+    });
+  }
+
+  // 足迹高亮模式：原有的返回逻辑
   return Array.from(regionMap.entries()).map(([name, logList]) => {
     const colors = logList.map((l) => getCompanionColor(l.companion_type));
     let areaColor = colors[0];
@@ -1536,6 +1611,10 @@ function formatTooltip(regionName) {
   if (!state.session && !state.isSharedMode) return `${title}<br/>登录后可查看足迹`;
   if (state.mapMode === "plain") return `${title}<br/>普通地图模式未显示足迹`;
   if (!matchedLogs.length) return `${title}<br/>暂无足迹`;
+
+  if (state.mapMode === "heatmap") {
+    return `${title}<br/>到访次数：${matchedLogs.length} 次`;
+  }
 
   const rows = matchedLogs
     .map((log) => {
