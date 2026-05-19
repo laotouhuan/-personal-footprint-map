@@ -868,6 +868,68 @@ textarea {
   transform: translateX(-50%) translateY(0);
 }
 
+/* ── 统计功能样式 ── */
+.stats-badge {
+  border: 1px solid rgba(79, 70, 229, 0.2);
+  background: rgba(79, 70, 229, 0.08);
+  color: var(--accent);
+  padding: 4px 10px;
+  border-radius: 99px;
+  font-size: 13px;
+  font-weight: 700;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.stats-badge:hover {
+  background: rgba(79, 70, 229, 0.15);
+  border-color: rgba(79, 70, 229, 0.3);
+  transform: translateY(-1px);
+}
+
+.stats-summary {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+  margin-bottom: 24px;
+}
+
+.stat-box {
+  background: white;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 16px;
+  text-align: center;
+}
+
+.stat-box .stat-value {
+  font-size: 28px;
+  font-weight: 900;
+  color: var(--accent);
+  line-height: 1.2;
+}
+
+.stat-box .stat-label {
+  font-size: 13px;
+  color: var(--muted);
+  margin-top: 4px;
+}
+
+.chart-container {
+  background: white;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+.chart-title {
+  font-size: 15px;
+  font-weight: 700;
+  margin: 0 0 12px 0;
+  color: var(--ink);
+}
+
 @media (max-width: 768px) {
   .topbar {
     height: auto;

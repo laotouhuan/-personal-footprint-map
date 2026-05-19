@@ -22,6 +22,7 @@
             <div class="filter-dropdown" id="filterDropdown" hidden></div>
           </div>
           <button class="tool-button" id="shareButton" type="button" hidden>分享</button>
+          <button class="tool-button" id="statsButton" type="button">统计</button>
           <button class="tool-button" id="ledgerButton" type="button" hidden>足迹簿</button>
           <span class="status-pill" id="authStatus" hidden>访客模式 (只读)</span>
           <button class="tool-button" id="loginButton" type="button" hidden>管理员登录</button>
@@ -36,8 +37,13 @@
           <div class="map-loading" id="loadingMask">正在加载地图...</div>
           
           <div class="floating-panel floating-header">
-            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px;">
-              <h1 id="mapTitle">全国足迹</h1>
+            <div style="display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 16px;">
+              <div style="display: flex; flex-direction: column; gap: 6px;">
+                <h1 id="mapTitle">全国足迹</h1>
+                <div>
+                  <button id="totalStatsBadge" class="stats-badge" type="button" title="点击查看详细统计" hidden>0 省份</button>
+                </div>
+              </div>
               <button class="tool-button" id="backButton" type="button" hidden>🔙 返回</button>
             </div>
             
@@ -78,6 +84,29 @@
         <button class="icon-button" id="closeLedgerButton" type="button" aria-label="关闭">×</button>
       </div>
       <div class="drawer-body" id="ledgerList"></div>
+    </aside>
+
+    <aside class="drawer" id="statsDrawer" aria-hidden="true">
+      <div class="drawer-header">
+        <div>
+          <p class="eyebrow">数据看板</p>
+          <h2>我的旅行统计</h2>
+        </div>
+        <button class="icon-button" id="closeStatsButton" type="button" aria-label="关闭">×</button>
+      </div>
+      <div class="drawer-body">
+        <div class="stats-summary" id="statsSummaryContainer">
+          <!-- 动态渲染数字摘要 -->
+        </div>
+        <div class="chart-container">
+          <h3 class="chart-title">足迹时间线</h3>
+          <div id="timelineChart" style="width: 100%; height: 240px;"></div>
+        </div>
+        <div class="chart-container">
+          <h3 class="chart-title">同行者分布</h3>
+          <div id="companionChart" style="width: 100%; height: 240px;"></div>
+        </div>
+      </div>
     </aside>
     <div class="drawer-scrim" id="drawerScrim" hidden></div>
 

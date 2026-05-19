@@ -166,6 +166,13 @@ const els = {
   brandButton: document.querySelector("#brandButton"),
   toast: document.querySelector("#toast"),
   offscreenMap: document.querySelector("#offscreenMap"),
+  statsButton: document.querySelector("#statsButton"),
+  totalStatsBadge: document.querySelector("#totalStatsBadge"),
+  statsDrawer: document.querySelector("#statsDrawer"),
+  closeStatsButton: document.querySelector("#closeStatsButton"),
+  statsSummaryContainer: document.querySelector("#statsSummaryContainer"),
+  timelineChartEl: document.querySelector("#timelineChart"),
+  companionChartEl: document.querySelector("#companionChart"),
 };
 
 const countryCodeMap = {
@@ -260,9 +267,16 @@ function setupStaticUi() {
   });
   els.ledgerButton.addEventListener("click", openLedger);
   els.closeLedgerButton.addEventListener("click", closeLedger);
-  els.drawerScrim.addEventListener("click", closeLedger);
+  els.drawerScrim.addEventListener("click", () => {
+    closeLedger();
+    closeStatsDrawer();
+  });
   els.loginForm.addEventListener("submit", login);
   els.footprintForm.addEventListener("submit", saveFootprint);
+  
+  els.statsButton.addEventListener("click", openStatsDrawer);
+  els.totalStatsBadge.addEventListener("click", openStatsDrawer);
+  els.closeStatsButton.addEventListener("click", closeStatsDrawer);
   
   els.filterToggleButton.addEventListener("click", () => {
     els.filterDropdown.hidden = !els.filterDropdown.hidden;
@@ -768,6 +782,7 @@ async function renderCurrentMap() {
   }
   
   syncMapControls();
+  updateStatsBadge();
 
   const renderTarget = await prepareRenderTarget();
   if (!renderTarget || serial !== state.renderSerial) return;
@@ -1929,6 +1944,173 @@ async function deleteFootprint(id) {
   renderCurrentMap();
 }
 
+
+/* ═══════════════════════════════════════════════════════════
+ * 11.5 数据统计 (Statistics)
+ * ═══════════════════════════════════════════════════════════ */
+function updateStatsBadge() {
+  if (!state.session && !state.isSharedMode) {
+    els.totalStatsBadge.hidden = true;
+    return;
+  }
+  
+  const visibleLogs = getVisibleLogs();
+  let count = 0;
+  let total = 0;
+  let label = "";
+
+  // 决定当前渲染使用的 mapName，以此获取对应的总区域数
+  let activeMapName = state.currentView.mapName;
+  if (state.currentView.level === "country" && state.fillLevel === "city" && state.currentView.mapName === "china") {
+    activeMapName = CHINA_CITY_MAP_NAME;
+  }
+  
+  const currentMapRegions = state.mapRegions.get(activeMapName);
+  if (currentMapRegions) {
+    total = currentMapRegions.size;
+    // 如果地图包含南海诸岛但它不是独立的行政区，通常不计入总数分子
+    if (currentMapRegions.has("南海诸岛")) {
+      total -= 1;
+    }
+  }
+
+  if (state.currentView.level === "world") {
+    const countries = new Set(visibleLogs.map(l => l.country).filter(Boolean));
+    count = countries.size;
+    label = "国家";
+    total = 0; // 国家层级不显示总数
+  } else if (state.currentView.level === "country") {
+    const countryLogs = visibleLogs.filter(l => l.country === state.currentView.country);
+    if (state.fillLevel === "city" && state.currentView.mapName === "china") {
+      const cities = new Set(countryLogs.map(l => l.city).filter(Boolean));
+      count = cities.size;
+      label = "城市";
+    } else {
+      const provinces = new Set(countryLogs.map(l => l.province).filter(Boolean));
+      count = provinces.size;
+      label = "省份";
+    }
+  } else if (state.currentView.level === "province") {
+    const provinceLogs = visibleLogs.filter(l => l.province === state.currentView.province);
+    const cities = new Set(provinceLogs.map(l => l.city).filter(Boolean));
+    count = cities.size;
+    label = "城市";
+  }
+  
+  if (count > 0 || total > 0) {
+    els.totalStatsBadge.hidden = false;
+    els.totalStatsBadge.textContent = total > 0 ? `点亮 ${count}/${total} ${label}` : `点亮 ${count} ${label}`;
+  } else {
+    els.totalStatsBadge.hidden = true;
+  }
+}
+
+function openStatsDrawer() {
+  if (!state.session && !state.isSharedMode) {
+    showToast("请先登录或通过分享链接访问");
+    return;
+  }
+  renderStats();
+  els.statsDrawer.classList.add("open");
+  els.statsDrawer.setAttribute("aria-hidden", "false");
+  els.drawerScrim.hidden = false;
+}
+
+function closeStatsDrawer() {
+  els.statsDrawer.classList.remove("open");
+  els.statsDrawer.setAttribute("aria-hidden", "true");
+  if (!els.ledgerDrawer.classList.contains("open")) {
+    els.drawerScrim.hidden = true;
+  }
+}
+
+function renderStats() {
+  const visibleLogs = getVisibleLogs();
+  
+  const totalCount = visibleLogs.length;
+  const provinces = new Set(visibleLogs.map(l => l.province).filter(Boolean)).size;
+  const cities = new Set(visibleLogs.map(l => l.city).filter(Boolean)).size;
+  const countries = new Set(visibleLogs.map(l => l.country).filter(Boolean)).size;
+  
+  els.statsSummaryContainer.innerHTML = `
+    <div class="stat-box">
+      <div class="stat-value">${provinces}</div>
+      <div class="stat-label">点亮省份</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-value">${cities}</div>
+      <div class="stat-label">打卡城市</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-value">${totalCount}</div>
+      <div class="stat-label">总足迹数</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-value">${countries}</div>
+      <div class="stat-label">探索国家</div>
+    </div>
+  `;
+
+  // 渲染同行者饼图
+  const companionCounts = {};
+  visibleLogs.forEach(log => {
+    companionCounts[log.companion_type] = (companionCounts[log.companion_type] || 0) + 1;
+  });
+  const pieData = Object.entries(companionCounts).map(([name, value]) => ({
+    name, value, itemStyle: { color: getCompanionColor(name) }
+  })).sort((a, b) => b.value - a.value);
+
+  if (!state.companionChartInstance) {
+    state.companionChartInstance = echarts.init(els.companionChartEl);
+  }
+  state.companionChartInstance.setOption({
+    tooltip: { trigger: 'item' },
+    series: [{
+      type: 'pie',
+      radius: ['40%', '70%'],
+      avoidLabelOverlap: true,
+      itemStyle: {
+        borderRadius: 5,
+        borderColor: '#fff',
+        borderWidth: 2
+      },
+      label: { show: true, formatter: '{b}\n{d}%' },
+      data: pieData
+    }]
+  });
+
+  // 渲染时间线柱状图
+  const yearCounts = {};
+  visibleLogs.forEach(log => {
+    const year = new Date(log.visit_date).getFullYear();
+    yearCounts[year] = (yearCounts[year] || 0) + 1;
+  });
+  
+  const years = Object.keys(yearCounts).sort((a, b) => a - b);
+  const yearData = years.map(y => yearCounts[y]);
+
+  if (!state.timelineChartInstance) {
+    state.timelineChartInstance = echarts.init(els.timelineChartEl);
+  }
+  state.timelineChartInstance.setOption({
+    tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+    grid: { left: '3%', right: '4%', bottom: '3%', top: '10%', containLabel: true },
+    xAxis: { type: 'category', data: years, axisTick: { alignWithLabel: true } },
+    yAxis: { type: 'value', minInterval: 1 },
+    series: [{
+      type: 'bar',
+      barWidth: '60%',
+      data: yearData,
+      itemStyle: { color: '#4f46e5', borderRadius: [4, 4, 0, 0] }
+    }]
+  });
+
+  // 延时重置大小以适应容器
+  setTimeout(() => {
+    state.companionChartInstance.resize();
+    state.timelineChartInstance.resize();
+  }, 300);
+}
 
 /* ═══════════════════════════════════════════════════════════
  * 12. 工具函数 (Utilities)
